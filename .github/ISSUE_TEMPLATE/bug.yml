@@ -1,0 +1,16 @@
+
+name: Bug
+labels: [bug]
+body:
+  - type: textarea
+    id: repro
+    attributes: { label: Steps to Reproduce }
+  - type: textarea
+    id: expected
+    attributes: { label: Expected }
+  - type: textarea
+    id: actual
+    attributes: { label: Actual }
+  - type: textarea
+    id: logs
+    attributes: { label: Logs / Screenshots }

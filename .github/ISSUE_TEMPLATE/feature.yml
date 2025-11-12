@@ -1,0 +1,17 @@
+
+name: Feature
+labels: [feature]
+body:
+  - type: input
+    id: goal
+    attributes: { label: Goal }
+  - type: textarea
+    id: spec
+    attributes: { label: Spec / Acceptance Criteria }
+  - type: checkboxes
+    id: scope
+    attributes: { label: Scope }
+    options:
+      - label: UI done
+      - label: Server done
+      - label: Tests done

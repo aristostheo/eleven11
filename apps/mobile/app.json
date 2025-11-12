@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Eleven11",
+    "slug": "eleven11",
+    "scheme": "eleven11",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "sdkVersion": "52.0.0",
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
