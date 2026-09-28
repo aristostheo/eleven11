@@ -84,3 +84,114 @@ only through the normal approved release process. Then run on the iPhone at a re
 
 Until those steps pass, server-clock behavior is locally verified but live posting,
 photo storage, 11:11 opening and duplicate rejection remain unverified.
+
+## Gen 1 invocation IAM — evidence and proposed change (not applied)
+
+The deployed functions are Gen 1 (`platform=gcfv1`). For each function, the
+Cloud Functions v1 `getIamPolicy` endpoint was queried for the exact resource
+`projects/eleven11-aristos/locations/us-central1/functions/{name}`. The response
+for `getServerTime`, `canPost`, and `submitPost` was an empty policy (`bindings=[]`,
+with only an etag). None has a `roles/cloudfunctions.invoker` binding for
+`allUsers`. This is the direct Gen 1 policy evidence; Cloud Run service IAM is
+not the relevant policy surface for these deployments.
+
+The proposed, function-scoped changes are the following commands. They have not
+been run:
+
+```sh
+gcloud functions add-invoker-policy-binding getServerTime \
+  --region=us-central1 --member=allUsers \
+  --project=eleven11-aristos
+gcloud functions add-invoker-policy-binding canPost \
+  --region=us-central1 --member=allUsers \
+  --project=eleven11-aristos
+gcloud functions add-invoker-policy-binding submitPost \
+  --region=us-central1 --member=allUsers \
+  --project=eleven11-aristos
+```
+
+The Firebase callable client is an end-user HTTP client, not a Google Cloud IAM
+principal with a function-invoker identity. The Gen 1 front door therefore must
+admit the request before the callable protocol can parse its Firebase Auth
+token. `allUsers` grants only network invocation of these three functions; it
+does not grant Firebase Auth, Firestore, or Storage access. `getServerTime` is
+intentionally public in its handler. `canPost` and `submitPost` still check
+`context.auth` and return `HttpsError("unauthenticated", "Login required")` when
+the callable request has no Firebase Auth identity. Public invocation can expose
+the endpoints to probes and billable traffic, so App Check, handler auth, and
+rate limiting remain relevant controls.
+
+After an approved change, verify the policy and behavior in this order:
+
+1. Read each policy with `gcloud functions get-iam-policy NAME
+   --region=us-central1 --project=eleven11-aristos --format=json`; each should
+   contain `roles/cloudfunctions.invoker` with member `allUsers`.
+2. Send an unauthenticated callable request to `getServerTime`:
+
+   ```sh
+   curl -i -sS -X POST \
+     -H 'Content-Type: application/json' \
+     --data '{"data":{}}' \
+     https://us-central1-eleven11-aristos.cloudfunctions.net/getServerTime
+   ```
+
+   Expect HTTP 200 and callable JSON containing `data.serverMillis`.
+3. Obtain a fresh anonymous Firebase ID token, then call `canPost` with
+   `Authorization: Bearer $FIREBASE_ID_TOKEN` and a payload such as
+   `{"data":{"tzId":"UTC","clientNow":0}}`. Expect HTTP 200 with the
+   handler's `allowed`/`reason` result for the current window.
+4. Repeat the `canPost` request with the same payload and no Authorization
+   header. Expect the callable handler's structured HTTP 401/
+   `UNAUTHENTICATED` response with `Login required`, rather than the previous
+   HTML Google 401 front-door response. This proves IAM admission and handler
+   Firebase Auth enforcement separately.
+
+## Storage provisioning, billing, and rules — proposal (not applied)
+
+The Cloud Billing API reports `billingEnabled=true` and an open linked billing
+account (`billingAccounts/0128B2-500610-CFDC05`, display name `Firebase Payment`).
+That means the project is already on Firebase's Blaze pay-as-you-go plan; no
+Spark-to-Blaze upgrade is currently required. Creating the bucket itself is not
+the cost concern, but stored bytes, operations, and network egress can incur
+charges after applicable free quotas. A budget alert should be configured; it
+does not cap usage.
+
+The proposed bucket location is `us-central1`, matching all deployed functions
+and reducing request latency. A bucket location is immutable after creation, so
+confirm data-residency requirements before provisioning. `us-central1` is among
+the locations documented as eligible for Google Cloud Storage's Always Free
+tier, subject to the current quotas and terms; this is not a guarantee of zero
+cost. The expected default bucket name is
+`eleven11-aristos.firebasestorage.app`. It currently does not exist (the Storage
+API returned HTTP 404), and no bucket was created.
+
+Exact Firebase Console steps, to perform only after approval:
+
+1. Open the Firebase Console project `eleven11-aristos`.
+2. Select **Databases & Storage → Storage → Files**, then click **Get started**.
+3. Confirm the Blaze plan when shown (the project is already linked to an open
+   billing account).
+4. Select **us-central1** as the bucket location and continue.
+5. Review the rules step, then finish with **Done**. Do not retain temporary
+   starter rules as the release policy.
+6. Confirm that the Files view shows
+   `eleven11-aristos.firebasestorage.app` in `us-central1`.
+7. In a separately approved release, deploy the checked-in `storage.rules` with
+   `firebase deploy --only storage` from the repository.
+
+The checked-in rules to deploy are:
+
+```text
+match /uploads/{uid}/{fileName} {
+  allow read: if true;
+  allow create: if request.auth != null && request.auth.uid == uid
+                && request.resource.size < 3 * 1024 * 1024
+                && request.resource.contentType.matches('image/.*');
+  allow delete: if request.auth != null && request.auth.uid == uid;
+}
+```
+
+They allow public reads of uploaded objects, restrict creation and deletion to
+the owning signed-in user, require an image MIME type, and cap new files below
+3 MiB. No bucket, rules, function, IAM, or PR merge operation was performed
+while recording this proposal; PR #1 remains a draft.
