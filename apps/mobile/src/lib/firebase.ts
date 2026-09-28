@@ -23,7 +23,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyAFHw1dLnbipOK7Nz1-tQ7wG1vqRwaRlAA",
   authDomain: "eleven11-aristos.firebaseapp.com",
   projectId: "eleven11-aristos",
-  storageBucket: "eleven11-aristos.appspot.com",
+  storageBucket: "eleven11-aristos.firebasestorage.app",
   messagingSenderId: "1071072560179",
   appId: "1:1071072560179:web:9e125149447e79203dcf46",
 };
