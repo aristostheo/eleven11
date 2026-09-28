@@ -16,7 +16,7 @@ import {
 } from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getFunctions, httpsCallable } from "firebase/functions";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
 // --- eleven11 config ---
 const firebaseConfig = {
@@ -76,6 +76,7 @@ export { auth };
 const functions = getFunctions(app, "us-central1");
 const _canPost = httpsCallable(functions, "canPost");
 const _submitPost = httpsCallable(functions, "submitPost");
+const _getServerTime = httpsCallable<undefined, { serverMillis: number }>(functions, "getServerTime");
 
 // Ensure a signed-in user (silent anonymous)
 let signInPromise: Promise<User> | null = null;
@@ -100,6 +101,16 @@ export async function uploadPhoto(uri: string): Promise<string> {
   const photoRef = ref(getStorage(app), `uploads/${user.uid}/${Date.now()}-${Math.random().toString(36).slice(2)}`);
   await uploadBytes(photoRef, blob, { contentType: blob.type || "image/jpeg" });
   return getDownloadURL(photoRef);
+}
+
+export async function deleteUploadedPhoto(url: string): Promise<void> {
+  await deleteObject(ref(getStorage(app), url));
+}
+
+export async function getServerTime(): Promise<number> {
+  const { data } = await _getServerTime();
+  if (!Number.isFinite(data.serverMillis)) throw new Error("Invalid server time");
+  return data.serverMillis;
 }
 
 // Callable wrappers
