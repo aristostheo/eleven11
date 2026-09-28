@@ -280,3 +280,59 @@ reach the callable endpoints; handler authentication still protects posting,
 while `getServerTime` is public. The project is already on Blaze, so no plan
 upgrade occurred. Storage usage, operations, egress, and callable traffic may
 incur charges under the linked billing account.
+
+## Development Emulator Suite iPhone test — 2026-09-28
+
+This section used only the local Firebase Emulator Suite and an Expo Go
+development bundle. No live Firebase resource, deployment, push, merge, or
+commit was made. The app was explicitly routed to the emulators only when both
+`__DEV__` and `EXPO_PUBLIC_USE_FIREBASE_EMULATORS=1` are set. The Functions
+virtual clock is enabled only when `FUNCTIONS_EMULATOR=true`; deployed
+functions continue to use the real server clock and require HTTPS media URLs.
+
+### Setup and observed phone results
+
+- The local emulators listened on the Mac LAN address `192.168.4.52` for Auth
+  (9099), Functions (5001), Firestore (8080), and Storage (9199). Expo served
+  the development bundle at `exp://192.168.4.52:8083`.
+- LAN preflight passed: Metro returned HTTP 200 and `getServerTime` returned
+  HTTP 200 through the LAN address before the test window.
+- The shared virtual Toronto window was 17:06:07–17:07:37 EDT (90 seconds).
+  The phone showed “Opens in 0h 0m 20s” at 17:05:47, then Compose showed the
+  active window with 68 seconds remaining. **Passed: the phone countdown and
+  emulator server clock opened together.**
+- The phone selected an image and submitted a caption while the window was
+  open. The UI showed `Failed to post — Bad payload [400]`. **Failed: iPhone
+  photo posting.**
+- The image was removed and the same phone posted text successfully. The UI
+  reported post ID `NRXs0vSAiiJJaFtiHAWf`. **Passed: iPhone text posting.**
+- Returning to Compose after that post displayed “You already posted today.”
+  and disabled the button. **Passed: duplicate rejection in the iPhone UI.**
+- A photo post from a second physical anonymous identity was not completed in
+  this window. **Unverified: successful iPhone photo posting and its duplicate
+  rejection using a second identity.**
+
+### Photo failure diagnosis and local fix
+
+The Storage Emulator supplies download URLs using `http://192.168.4.52:9199`.
+The mobile app sent that URL after selecting the photo, but the callable's
+`mediaSchema` accepted only `https://` URLs, producing the observed 400 Bad
+payload response. The matching owner Storage upload had already passed in the
+local emulator smoke test, so this was callable payload validation rather than
+the earlier Storage Rules failure.
+
+`functions/src/validation.ts` now permits an `http://` media URL only while
+`FUNCTIONS_EMULATOR=true`. In every deployed or release environment the same
+schema continues to require HTTPS. The emulator smoke test now preserves the
+actual Storage Emulator URL rather than rewriting it to HTTPS.
+
+### Checks after the fix
+
+- Mobile `npm run typecheck`: passed.
+- Functions `npm run build`: passed.
+- Functions `npm run lint`: passed.
+- `node --test tests/*.test.cjs`: 7 passed, 0 failed.
+
+The local owner-upload, cross-user-rejection, and owner-delete Storage smoke
+checks passed before the phone run. The corrected iPhone photo path has not
+yet been repeated on-device, so it remains a required development-only retest.

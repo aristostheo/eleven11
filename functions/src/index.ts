@@ -9,9 +9,45 @@ import { inPostingWindow, timezoneSchema, mediaSchema } from "./validation";
 initializeApp();
 const db = getFirestore();
 
+// The emulator can run against a deterministic virtual clock. These variables
+// are intentionally honored only by the Functions emulator; deployed functions
+// always use the real server clock.
+const emulatorClockEnabled = process.env.FUNCTIONS_EMULATOR === "true";
+const emulatorNowAnchor = emulatorClockEnabled && process.env.ELEVEN11_EMULATOR_NOW
+  ? Date.parse(process.env.ELEVEN11_EMULATOR_NOW)
+  : NaN;
+const emulatorWindowStart = emulatorClockEnabled && process.env.ELEVEN11_EMULATOR_WINDOW_START
+  ? Date.parse(process.env.ELEVEN11_EMULATOR_WINDOW_START)
+  : NaN;
+const emulatorRealAnchor = emulatorClockEnabled && process.env.ELEVEN11_EMULATOR_REAL_START
+  ? Number(process.env.ELEVEN11_EMULATOR_REAL_START)
+  : Date.now();
+
+/** Return the real clock, or the advancing emulator clock when configured.
+ * @return {number} Current server time in milliseconds.
+ */
+function serverMillis() {
+  return Number.isFinite(emulatorNowAnchor)
+    ? emulatorNowAnchor + (Date.now() - emulatorRealAnchor)
+    : DateTime.now().toMillis();
+}
+
+/** Apply the optional emulator window without changing production behavior.
+ * @param {DateTime} now Current virtual time in the requested zone.
+ * @return {Object} Window state.
+ */
+function postingWindowFor(now: DateTime) {
+  if (Number.isFinite(emulatorWindowStart)) {
+    const start = DateTime.fromMillis(emulatorWindowStart).setZone(now.zoneName ?? "UTC");
+    const end = start.plus({ seconds: 90 });
+    return { start, end, open: now >= start && now < end };
+  }
+  return { open: inPostingWindow(now) };
+}
+
 // ——— getServerTime ————————————————————————————————
 export const getServerTime = functions.https.onCall(async () => {
-  return { serverMillis: Date.now() };
+  return { serverMillis: serverMillis() };
 });
 
 // ——— canPost ————————————————————————————————————————
@@ -31,11 +67,11 @@ export const canPost = functions.https.onCall(async (data, context) => {
   }
 
   const { tzId } = parsed.data;
-  const now = DateTime.now().setZone(tzId);
+  const now = DateTime.fromMillis(serverMillis()).setZone(tzId);
   const dayKey = now.toISODate();
 
   // 11:11 window = 90 seconds
-  const inWindow = inPostingWindow(now);
+  const inWindow = postingWindowFor(now).open;
 
   // one post per day
   const existing = await db
@@ -73,9 +109,9 @@ export const submitPost = functions.https.onCall(async (data, context) => {
   const { tzId, caption, media } = parsed.data;
 
   // re-check the window server-side
-  const now = DateTime.now().setZone(tzId);
+  const now = DateTime.fromMillis(serverMillis()).setZone(tzId);
   const dayKey = now.toISODate();
-  if (!inPostingWindow(now)) {
+  if (!postingWindowFor(now).open) {
     throw new functions.https.HttpsError(
       "failed-precondition",
       "Not in 11:11 window"

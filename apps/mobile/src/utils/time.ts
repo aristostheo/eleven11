@@ -1,7 +1,11 @@
 import { DateTime } from "luxon";
 
 export const WINDOW_SECONDS = 90;
-export function postingWindow(now: DateTime) {
+export function postingWindow(now: DateTime, overrideStartMillis?: number) {
+  if (overrideStartMillis !== undefined && Number.isFinite(overrideStartMillis)) {
+    const start = DateTime.fromMillis(overrideStartMillis).setZone(now.zoneName ?? "UTC");
+    return { start, end: start.plus({ seconds: WINDOW_SECONDS }), open: now >= start && now < start.plus({ seconds: WINDOW_SECONDS }) };
+  }
   const windows = [11, 23].map((hour) => {
     const start = now.set({ hour, minute: 11, second: 0, millisecond: 0 });
     return { start, end: start.plus({ seconds: WINDOW_SECONDS }) };

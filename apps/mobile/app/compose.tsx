@@ -24,6 +24,7 @@ import { canPost, submitPost, ensureAuth, uploadPhoto, deleteUploadedPhoto } fro
 import { useServerClock } from "../src/utils/useServerClock";
 
 import { postingWindow, WINDOW_SECONDS } from "../src/utils/time";
+import { emulatorWindowStartMillis } from "../src/utils/emulator";
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const MAX_CHARS = 280;
@@ -116,7 +117,7 @@ export default function Compose() {
       return;
     }
     const now = DateTime.fromMillis(nowMillis).setZone(tzId);
-    const { start, end, open } = postingWindow(now);
+    const { start, end, open } = postingWindow(now, emulatorWindowStartMillis);
 
     if (open) {
       const left = end.diff(now, ["seconds"]).seconds ?? 0;
@@ -159,7 +160,7 @@ export default function Compose() {
         setReason("Connecting to the server clock…");
         return;
       }
-      if (!postingWindow(DateTime.fromMillis(nowMillis).setZone(tzId)).open) {
+      if (!postingWindow(DateTime.fromMillis(nowMillis).setZone(tzId), emulatorWindowStartMillis).open) {
         setAllowed(false);
         setReason("Posting opens at 11:11 AM and PM.");
         return;

@@ -11,12 +11,14 @@ import {
   browserLocalPersistence,
   setPersistence,
   signInAnonymously,
+  connectAuthEmulator,
   type User,
   type Persistence,
 } from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getFunctions, httpsCallable } from "firebase/functions";
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
+import { getFunctions, httpsCallable, connectFunctionsEmulator } from "firebase/functions";
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator } from "firebase/storage";
+import { emulatorEnabled, emulatorHost } from "../utils/emulator";
 
 // --- eleven11 config ---
 const firebaseConfig = {
@@ -72,8 +74,15 @@ const auth = (() => {
 
 export { auth };
 
+if (emulatorEnabled) {
+  connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true });
+}
+
 // ---- Functions ----
 const functions = getFunctions(app, "us-central1");
+if (emulatorEnabled) connectFunctionsEmulator(functions, emulatorHost, 5001);
+const storage = getStorage(app);
+if (emulatorEnabled) connectStorageEmulator(storage, emulatorHost, 9199);
 const _canPost = httpsCallable(functions, "canPost");
 const _submitPost = httpsCallable(functions, "submitPost");
 const _getServerTime = httpsCallable<undefined, { serverMillis: number }>(functions, "getServerTime");
@@ -98,13 +107,13 @@ export async function uploadPhoto(uri: string): Promise<string> {
   if (blob.size >= 3 * 1024 * 1024) {
     throw new Error("Choose a photo smaller than 3 MB.");
   }
-  const photoRef = ref(getStorage(app), `uploads/${user.uid}/${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const photoRef = ref(storage, `uploads/${user.uid}/${Date.now()}-${Math.random().toString(36).slice(2)}`);
   await uploadBytes(photoRef, blob, { contentType: blob.type || "image/jpeg" });
   return getDownloadURL(photoRef);
 }
 
 export async function deleteUploadedPhoto(url: string): Promise<void> {
-  await deleteObject(ref(getStorage(app), url));
+  await deleteObject(ref(storage, url));
 }
 
 export async function getServerTime(): Promise<number> {

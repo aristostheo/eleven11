@@ -15,6 +15,7 @@ import * as Haptics from "expo-haptics";
 import Svg, { Circle } from "react-native-svg";
 import { postingWindow, WINDOW_SECONDS } from "../src/utils/time";
 import { useServerClock } from "../src/utils/useServerClock";
+import { emulatorWindowStartMillis } from "../src/utils/emulator";
 
 type GateState = "checking" | "locked" | "open";
 const { width } = Dimensions.get("window");
@@ -91,7 +92,7 @@ export default function Gate() {
       return;
     }
     const now = DateTime.fromMillis(nowMillis).setZone(tzId);
-    const { start, end, open } = postingWindow(now);
+    const { start, end, open } = postingWindow(now, emulatorWindowStartMillis);
     setNowStr(now.toFormat("HH:mm:ss"));
     setState(open ? "open" : "locked");
     setCountdownStr(open
