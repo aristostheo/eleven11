@@ -5,12 +5,10 @@
     "scheme": "eleven11",
     "version": "1.0.0",
     "orientation": "portrait",
-    "sdkVersion": "52.0.0",
     "plugins": [
-      "expo-router"
-    ],
-    "experiments": {
-      "typedRoutes": true
-    }
+      "expo-router",
+      "expo-localization",
+      "expo-status-bar"
+    ]
   }
 }

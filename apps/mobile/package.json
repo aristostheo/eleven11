@@ -7,19 +7,35 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "eslint ."
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "expo": "~52.0.0",
-    "expo-router": "~4.0.0",
-    "expo-localization": "~16.0.0",
-    "expo-status-bar": "~2.0.0",
-    "react": "18.3.1",
-    "react-native": "0.76.0",
-    "zod": "^3.23.8",
-    "firebase": "^10.13.0"
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "expo": "^57.0.24",
+    "expo-constants": "~57.0.19",
+    "expo-haptics": "~57.0.3",
+    "expo-image-picker": "~57.0.20",
+    "expo-linear-gradient": "~57.0.2",
+    "expo-linking": "~57.0.11",
+    "expo-localization": "~57.0.2",
+    "expo-router": "~57.0.22",
+    "expo-status-bar": "~57.0.1",
+    "firebase": "^12.19.0",
+    "luxon": "^3.7.2",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-svg": "15.15.4",
+    "react-native-web": "^0.21.2",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "typescript": "^5.5.4"
+    "@babel/core": "^7.29.0",
+    "@types/luxon": "^3.7.1",
+    "@types/react": "~19.2.4",
+    "babel-preset-expo": "~57.0.0",
+    "typescript": "~6.0.3"
   }
 }

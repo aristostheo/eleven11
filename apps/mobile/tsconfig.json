@@ -15,11 +15,15 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "strict": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": [
         "./src/*"
       ]
     }
-  }
+  },
+  "extends": "expo/tsconfig.base",
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ]
 }

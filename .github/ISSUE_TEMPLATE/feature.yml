@@ -10,8 +10,9 @@ body:
     attributes: { label: Spec / Acceptance Criteria }
   - type: checkboxes
     id: scope
-    attributes: { label: Scope }
-    options:
-      - label: UI done
-      - label: Server done
-      - label: Tests done
+    attributes:
+      label: Scope
+      options:
+        - label: UI done
+        - label: Server done
+        - label: Tests done
