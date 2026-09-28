@@ -82,3 +82,13 @@ Track upstream-compatible fixes and assess runtime exposure before public releas
 Verify the backend on the iPhone, then implement a read-only daily feed/collage
 with a useful destination after posting. Settle clock synchronization and the
 identity/timezone policy before adding reactions and moderation.
+
+## v0.2 work in progress
+
+- The clock and composer now sample `getServerTime`, estimate network latency,
+  resync every minute and on app resume, and lock posting if the sample is stale.
+- A photo is removed after a definitive posting rejection. An ambiguous network
+  error preserves it because the server may have committed the post; server-side
+  orphan cleanup remains to be implemented.
+- Still required: deploy functions/rules, test text and photo posting plus duplicate
+  rejection on an iPhone, and settle stable identity/timezone and media ownership.
