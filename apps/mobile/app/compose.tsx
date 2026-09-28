@@ -20,7 +20,8 @@ import * as ImagePicker from "expo-image-picker";
 import * as Localization from "expo-localization";
 import { DateTime } from "luxon";
 import Svg, { Circle } from "react-native-svg";
-import { canPost, submitPost, ensureAuth, uploadPhoto } from "../src/lib/firebase";
+import { canPost, submitPost, ensureAuth, uploadPhoto, deleteUploadedPhoto } from "../src/lib/firebase";
+import { useServerClock } from "../src/utils/useServerClock";
 
 import { postingWindow, WINDOW_SECONDS } from "../src/utils/time";
 
@@ -60,6 +61,7 @@ const showFnError = (err: any, fallback = "Action failed") => {
 
 export default function Compose() {
   const tzId = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  const { serverNow } = useServerClock();
 
   const [caption, setCaption] = useState("");
   const [img, setImg] = useState<{
@@ -108,7 +110,12 @@ export default function Compose() {
 
   // Keep countdown + permission fresh
   const tick = async () => {
-    const now = DateTime.now().setZone(tzId);
+    const nowMillis = serverNow();
+    if (nowMillis === null) {
+      setWindowLeft("Syncing…");
+      return;
+    }
+    const now = DateTime.fromMillis(nowMillis).setZone(tzId);
     const { start, end, open } = postingWindow(now);
 
     if (open) {
@@ -139,14 +146,20 @@ export default function Compose() {
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [tzId]);
+  }, [tzId, serverNow]);
 
   useEffect(() => {
     let active = true;
     let checking = false;
     const checkPermission = async () => {
       if (checking) return;
-      if (!postingWindow(DateTime.now().setZone(tzId)).open) {
+      const nowMillis = serverNow();
+      if (nowMillis === null) {
+        setAllowed(false);
+        setReason("Connecting to the server clock…");
+        return;
+      }
+      if (!postingWindow(DateTime.fromMillis(nowMillis).setZone(tzId)).open) {
         setAllowed(false);
         setReason("Posting opens at 11:11 AM and PM.");
         return;
@@ -172,7 +185,7 @@ export default function Compose() {
     checkPermission();
     const id = setInterval(checkPermission, 5000);
     return () => { active = false; clearInterval(id); };
-  }, [tzId]);
+  }, [tzId, serverNow]);
 
   const charCount = caption.trim().length;
   const remaining = MAX_CHARS - charCount;
@@ -220,28 +233,44 @@ export default function Compose() {
       return;
     }
 
+    let uploadedUrl: string | null = null;
+    let posted = false;
+    let safeToDeleteUpload = true;
     try {
       setSubmitting(true);
       await ensureAuth(); // just in case
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      if (img) uploadedUrl = await uploadPhoto(img.uri);
       const payload: any = {
         tzId,
         caption: caption.trim(),
         media: img
-          ? { type: "image", url: await uploadPhoto(img.uri), w: img.w, h: img.h }
+          ? { type: "image", url: uploadedUrl, w: img.w, h: img.h }
           : { type: "none" },
       };
+      // A lost response may still mean the post was committed. Preserve the image
+      // unless the backend definitively rejected the submission.
+      safeToDeleteUpload = false;
       const res = (await submitPost(payload)) as unknown as {
         data: SubmitData;
       };
+      posted = true;
       const id = res?.data?.postId ?? "—";
       Alert.alert("Posted ✨", `Your wish is live.\nID: ${id}`);
       setCaption("");
       setImg(null);
       router.back();
     } catch (e) {
+      const code = String((e as { code?: string })?.code ?? "").replace(/^functions\//, "");
+      if (["already-exists", "failed-precondition", "invalid-argument", "unauthenticated"].includes(code)) {
+        safeToDeleteUpload = true;
+      }
       showFnError(e, "Failed to post");
     } finally {
+      if (uploadedUrl && !posted && safeToDeleteUpload) {
+        try { await deleteUploadedPhoto(uploadedUrl); }
+        catch (cleanupError) { console.warn("Could not clean up unused photo", cleanupError); }
+      }
       setSubmitting(false);
     }
   };
