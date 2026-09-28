@@ -285,7 +285,10 @@ export default function Gate() {
           onPress={() => router.push("/compose")}
           style={{
             position: "absolute",
-            bottom: 28,
+            // Keep the development shortcut above the status/footer copy.
+            // Its previous bottom offset placed the button directly over the
+            // "We’ll unlock right at 11:11" message on smaller iPhones.
+            bottom: 84,
             right: 20,
             paddingVertical: 12,
             paddingHorizontal: 14,

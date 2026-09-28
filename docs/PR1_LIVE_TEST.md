@@ -248,6 +248,8 @@ feed work was performed.
 - Regression tests: 7 passed, 0 failed.
 - `EXPO_OFFLINE=1 CI=1 npx expo export --platform all`: web, iOS, and Android
   exports passed.
+- The development-only **Preview compose** shortcut was moved above the footer
+  message (`bottom: 84`) so it no longer overlaps that message on small iPhones.
 
 ### iPhone / Expo Go test status
 
