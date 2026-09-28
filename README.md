@@ -68,6 +68,13 @@ In development, **Preview compose** lets you inspect the composer at any time.
 It does not bypass server posting restrictions. Release builds hide this link.
 Outside a posting window, the disabled submit button is expected.
 
+## Reproducible installs
+
+Both packages include `.npmrc` files recording the `legacy-peer-deps` mode used
+to generate their lockfiles. Run `npm ci` inside the package directory so local
+and CI installs use the same dependency resolution. Expo dependency checks and
+bundle exports validate the supported native package versions separately.
+
 ## Checks
 
 ```bash
