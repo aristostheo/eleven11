@@ -195,3 +195,86 @@ They allow public reads of uploaded objects, restrict creation and deletion to
 the owning signed-in user, require an image MIME type, and cap new files below
 3 MiB. No bucket, rules, function, IAM, or PR merge operation was performed
 while recording this proposal; PR #1 remains a draft.
+
+## v0.2 live verification after approved infrastructure changes — 2026-09-28
+
+The previously proposed live changes were applied directly to project
+`eleven11-aristos`. No function code deployment, Git push, PR merge, or daily
+feed work was performed.
+
+### IAM and callable results
+
+- Each Gen 1 function now has exactly the function-scoped binding
+  `roles/cloudfunctions.invoker` → `allUsers`. The policies were read back from
+  the Cloud Functions v1 API after the change for `getServerTime`, `canPost`, and
+  `submitPost`.
+- An unauthenticated POST to `getServerTime` returned HTTP 200 with a callable
+  `serverMillis` result.
+- A fresh anonymous Firebase Auth identity called `canPost` with
+  `tzId=UTC`; it reached the handler and returned HTTP 200 with
+  `allowed:false, reason:"outside-window"`.
+- The same `canPost` payload without an Authorization header returned HTTP 401
+  with structured callable JSON `{message:"Login required",status:"UNAUTHENTICATED"}`.
+- During the actual `Pacific/Gambier` 11:11 window, the first identity posted
+  text successfully (`postId=BGwYbjDfJIy7ZTS3vrDm`). Its immediate retry returned
+  HTTP 409 `ALREADY_EXISTS`.
+- A second anonymous identity uploaded an image and posted it successfully
+  (`postId=vwoIjk2bbA3llTem1Tls`) during the same window. Its immediate retry
+  returned HTTP 409 `ALREADY_EXISTS`.
+
+### Storage and rules results
+
+- The Firebase Storage default bucket was created through the Firebase Storage
+  API with an explicit immutable location of `us-central1`.
+- Read-back metadata reports location `US-CENTRAL1`, Standard class, and bucket
+  name `eleven11-aristos.firebasestorage.app`, exactly matching the checked-in
+  mobile config.
+- `firebase deploy --only storage --project eleven11-aristos --non-interactive`
+  compiled and released `storage.rules` successfully. The active release is
+  `firebase.storage/eleven11-aristos.firebasestorage.app`.
+- Rules verification with a temporary 1×1 PNG: owner create returned HTTP 200;
+  unauthenticated metadata read returned HTTP 200 as permitted; a signed-in
+  attempt to create under another UID returned HTTP 403; owner delete returned
+  HTTP 204.
+- The successful photo test object remains in Storage because the live Firestore
+  post stores its download URL. It is a tiny test object; deleting it would make
+  that recorded photo post's media URL invalid.
+
+### Local validation after the live changes
+
+- Mobile `npm run typecheck`: passed.
+- Functions `npm run build`: passed.
+- Functions `npm run lint`: passed.
+- Regression tests: 7 passed, 0 failed.
+- `EXPO_OFFLINE=1 CI=1 npx expo export --platform all`: web, iOS, and Android
+  exports passed.
+
+### iPhone / Expo Go test status
+
+No iPhone UI result is claimed here. The exact user-run steps are:
+
+1. From the repository, run `cd apps/mobile && npx expo start --lan`.
+2. Ensure the iPhone and computer are on the same Wi-Fi network.
+3. Open Expo Go on the iPhone, scan the displayed QR code, and wait for the app
+   to load.
+4. Confirm the clock reaches the synced state and that anonymous sign-in does
+   not show an error.
+5. During a real 11:11 window, submit one text post and record its returned
+   result, then retry and record the duplicate error.
+6. Using a fresh anonymous identity, submit one photo post and record its
+   result, then retry and record the duplicate error.
+7. Report the iPhone model, Expo Go version, local time zone, post IDs, and any
+   error text. Those user-provided results will be recorded separately from the
+   server-side checks above.
+
+### Remaining v0.2 gaps and access/cost implications
+
+The server-side live path is verified for callable admission, Firebase Auth
+enforcement, Storage rules, text posting, photo posting, and duplicate rejection.
+The remaining gap is the user-operated iPhone UI flow: Expo Go launch, UI
+anonymous sign-in, UI photo picker/upload, and UI error rendering remain
+untested here. The three `allUsers` invoker bindings allow internet traffic to
+reach the callable endpoints; handler authentication still protects posting,
+while `getServerTime` is public. The project is already on Blaze, so no plan
+upgrade occurred. Storage usage, operations, egress, and callable traffic may
+incur charges under the linked billing account.
