@@ -236,6 +236,19 @@ export default function Gate() {
           {state === "checking" ? "Syncing with the 11:11 clock…" : state === "open" ? "Make your wish ✨" : `Opens in ${countdownStr}`}
         </Animated.Text>
 
+        <Pressable
+          onPress={() => router.push("/feed")}
+          style={{
+            paddingHorizontal: 20,
+            paddingVertical: 11,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.45)",
+          }}
+        >
+          <Text style={{ color: "white", fontWeight: "700" }}>View daily wishes</Text>
+        </Pressable>
+
         {state === "open" && (
           <Animated.View
             style={{

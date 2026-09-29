@@ -1,12 +1,11 @@
-# Project status — 2026-09-28
+# Project status — 2026-09-29
 
 ## What exists
 
-Eleven11 is a **posting prototype**, not yet a complete social collage app.
-The only app routes are the clock (`app/index.tsx`) and composer (`app/compose.tsx`),
-plus their navigation layout. No additional feature specification or GitHub
-issues/PRs were present at review time. Items below distinguish missing parts of
-the original social-collage idea from optional product expansion.
+Eleven11 is a posting prototype with a read-only global daily feed. The app
+routes are the clock (`app/index.tsx`), composer (`app/compose.tsx`), and feed
+(`app/feed.tsx`). Items below distinguish the implemented v0.3 scope from
+remaining product work.
 
 Implemented locally:
 
@@ -15,6 +14,13 @@ Implemented locally:
 - Anonymous Firebase authentication with shared sign-in requests.
 - Server-side window and payload validation; one post per account/local day using
   a Firestore transaction and daily claim document.
+- Read-only daily feed with loading, empty, error, pull-to-refresh, and
+  pagination states. It shows active captions, photos, and viewer-local posting
+  times, newest first.
+- A global feed date: the UTC day range of server `createdAt`, while
+  author-local `dayKey` remains the one-post-per-local-day key.
+- Firestore read policy and composite index configuration for active daily-feed
+  queries. Non-active documents are denied to clients and excluded from the UI.
 - Expo SDK 57 / React Native 0.86 / Firebase JS 12 dependencies for Expo Go 57.
 - Regression tests for time boundaries, timezone rollover, invalid media and
   payloads, and duplicate submissions with a mock transaction adapter.
@@ -25,15 +31,14 @@ Implemented locally:
 | Priority | Area | Evidence / gap | Completion target |
 | --- | --- | --- | --- |
 | First | Firebase/device integration | Client uses a real Firebase project; no live deployment or device posting test was performed in this review. | Verify anonymous auth, actual bucket, deployed functions/rules, text/photo submission and duplicate rejection on iPhone. |
-| First | Feed / daily collage | No post-reading code or feed/detail route. Successful submission returns to the clock. | Display real posts with images, loading/empty/error states and pagination; decide when reading is unlocked. |
-| First | Clock synchronization | `getServerTime` exists in `functions/src/index.ts` but the client never calls it. Both screens gate themselves using the phone clock before asking the server. | Calculate server offset, refresh after resume, and reconcile server permission with the countdown. |
+| First | Feed moderation and media revocation | The feed hides non-active Firestore documents, but an already shared public Storage download URL remains usable. | Use revocable media delivery and moderation actions before claiming hidden media is inaccessible. |
 | Before public launch | Reactions | Only zero-valued `reacts.sparkle` and `reacts.crystal` fields are created. No UI or callable updates them. | Reaction controls, authenticated server mutation, duplicate/toggle policy and tests. |
-| Before public launch | Reports and moderation | Only a report counter and a permissive signed-in `/reports` create rule exist. No report UI, validated payload, review flow or moderation actions. All posts remain publicly readable regardless of `status`. | Define/report reasons, validate ownership/target data, rate-limit reports, and enforce visibility for hidden posts and media. |
+| Before public launch | Reports and moderation | Only a report counter and a permissive signed-in `/reports` create rule exist. No report UI, validated payload, review flow or moderation actions. The feed excludes non-active Firestore documents but cannot revoke public image URLs already shared. | Define/report reasons, validate ownership/target data, rate-limit reports, moderation actions, and revocable media delivery. |
 | Before public launch | Posting identity/timezone policy | Anonymous users can reset their identity; the timezone comes from the caller. Daily claims protect one UID/date, not one person or a rolling 24 hours. | Define stable account and timezone-change rules if a stronger daily limit is required. |
 | Before public launch | Media lifecycle and ownership | Upload precedes submission; a failed/expired submission can leave an orphan. Backend accepts any HTTPS image URL without checking the uploaded object's owner. | Associate uploads with the submitting user/post, clean up abandoned objects, and define post/media deletion. |
 | Next | Draft/retry experience | Caption and image exist only in component state. Image-picker exceptions have no visible recovery, and no draft restoration or upload progress exists. | Preserve drafts, show recoverable failures and upload progress, and prevent accidental loss on navigation. |
 | Next | Responsive layout/accessibility | Fixed offsets/heights and initial screen dimensions; image buttons have no explicit accessibility labels. No native visual or assistive-technology testing yet. | Check safe areas, small screens, keyboard, screen reader, large text and reduced motion on devices. |
-| Next | Emulator integration | `firebase.json` lists emulators, but the client never connects to them; Auth and Storage emulator setup is absent. | Explicit environment selection, phone-reachable host, complete emulator configuration and rules/integration tests. |
+| Next | Feed detail and historical views | The feed is intentionally limited to the current UTC day. There is no post detail route, author history, or historical archive. | Make product decisions before adding history or profiles. |
 | Next | Release packaging | No EAS build profiles, app icons, native bundle identifiers, or release/deployment workflow. | Configure these when a standalone install/release is wanted; Expo Go preview does not require them. |
 
 ## Optional expansion, not implemented or yet specified
@@ -77,18 +82,21 @@ Track upstream-compatible fixes and assess runtime exposure before public releas
 - https://github.com/advisories/GHSA-vcc3-ghjq-m6fr
 - https://github.com/advisories/GHSA-w5hq-g745-h8pq
 
+## v0.3 verification — daily feed
+
+- Local Firebase Emulator Suite test passed with callable-created posts: active
+  posts were queried newest-first over two pages, a photo post appeared, a
+  non-active post was excluded, and a direct client read of that hidden post was
+  rejected by Firestore Rules.
+- Mobile TypeScript check, Functions build/lint, and the seven existing
+  regression tests passed after the feed changes. The Expo export completed for
+  iOS, Android, and web.
+- A physical-device feed run still needs to be repeated after an approved
+  Firestore rules/index deployment. No Firebase deployment was performed for
+  v0.3.
+
 ## Suggested next milestone
 
-Verify the backend on the iPhone, then implement a read-only daily feed/collage
-with a useful destination after posting. Settle clock synchronization and the
-identity/timezone policy before adding reactions and moderation.
-
-## v0.2 work in progress
-
-- The clock and composer now sample `getServerTime`, estimate network latency,
-  resync every minute and on app resume, and lock posting if the sample is stale.
-- A photo is removed after a definitive posting rejection. An ambiguous network
-  error preserves it because the server may have committed the post; server-side
-  orphan cleanup remains to be implemented.
-- Still required: deploy functions/rules, test text and photo posting plus duplicate
-  rejection on an iPhone, and settle stable identity/timezone and media ownership.
+Before reactions or social features, settle moderation and media revocation:
+hiding a Firestore post cannot invalidate a public image URL that was already
+shared. Then revisit stable identity/timezone policy and media ownership.

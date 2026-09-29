@@ -14,7 +14,9 @@ service cloud.firestore {
     match /posts/{postId} {
       // Writes only via Cloud Functions using Admin SDK; block direct client writes.
       allow create, update, delete: if false;
-      allow read: if true;
+      // The read-only feed exposes active wishes only. Firestore evaluates this
+      // against the query constraint as well as individual document reads.
+      allow read: if resource.data.status == "active";
     }
 
     match /reports/{id} {
