@@ -11,19 +11,21 @@ import {
   browserLocalPersistence,
   setPersistence,
   signInAnonymously,
+  connectAuthEmulator,
   type User,
   type Persistence,
 } from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getFunctions, httpsCallable } from "firebase/functions";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { getFunctions, httpsCallable, connectFunctionsEmulator } from "firebase/functions";
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator } from "firebase/storage";
+import { emulatorEnabled, emulatorHost } from "../utils/emulator";
 
 // --- eleven11 config ---
 const firebaseConfig = {
   apiKey: "AIzaSyAFHw1dLnbipOK7Nz1-tQ7wG1vqRwaRlAA",
   authDomain: "eleven11-aristos.firebaseapp.com",
   projectId: "eleven11-aristos",
-  storageBucket: "eleven11-aristos.appspot.com",
+  storageBucket: "eleven11-aristos.firebasestorage.app",
   messagingSenderId: "1071072560179",
   appId: "1:1071072560179:web:9e125149447e79203dcf46",
 };
@@ -72,10 +74,18 @@ const auth = (() => {
 
 export { auth };
 
+if (emulatorEnabled) {
+  connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true });
+}
+
 // ---- Functions ----
 const functions = getFunctions(app, "us-central1");
+if (emulatorEnabled) connectFunctionsEmulator(functions, emulatorHost, 5001);
+const storage = getStorage(app);
+if (emulatorEnabled) connectStorageEmulator(storage, emulatorHost, 9199);
 const _canPost = httpsCallable(functions, "canPost");
 const _submitPost = httpsCallable(functions, "submitPost");
+const _getServerTime = httpsCallable<undefined, { serverMillis: number }>(functions, "getServerTime");
 
 // Ensure a signed-in user (silent anonymous)
 let signInPromise: Promise<User> | null = null;
@@ -97,9 +107,19 @@ export async function uploadPhoto(uri: string): Promise<string> {
   if (blob.size >= 3 * 1024 * 1024) {
     throw new Error("Choose a photo smaller than 3 MB.");
   }
-  const photoRef = ref(getStorage(app), `uploads/${user.uid}/${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const photoRef = ref(storage, `uploads/${user.uid}/${Date.now()}-${Math.random().toString(36).slice(2)}`);
   await uploadBytes(photoRef, blob, { contentType: blob.type || "image/jpeg" });
   return getDownloadURL(photoRef);
+}
+
+export async function deleteUploadedPhoto(url: string): Promise<void> {
+  await deleteObject(ref(storage, url));
+}
+
+export async function getServerTime(): Promise<number> {
+  const { data } = await _getServerTime();
+  if (!Number.isFinite(data.serverMillis)) throw new Error("Invalid server time");
+  return data.serverMillis;
 }
 
 // Callable wrappers

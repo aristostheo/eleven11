@@ -14,6 +14,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import Svg, { Circle } from "react-native-svg";
 import { postingWindow, WINDOW_SECONDS } from "../src/utils/time";
+import { useServerClock } from "../src/utils/useServerClock";
+import { emulatorWindowStartMillis } from "../src/utils/emulator";
 
 type GateState = "checking" | "locked" | "open";
 const { width } = Dimensions.get("window");
@@ -25,6 +27,7 @@ const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 export default function Gate() {
   const tzId = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  const { serverNow } = useServerClock();
   const [state, setState] = useState<GateState>("checking");
   const [countdownStr, setCountdownStr] = useState("—");
   const [nowStr, setNowStr] = useState("");
@@ -81,8 +84,15 @@ export default function Gate() {
     )}m ${Math.max(0, Math.floor(seconds))}s`;
   };
   const compute = () => {
-    const now = DateTime.now().setZone(tzId);
-    const { start, end, open } = postingWindow(now);
+    const nowMillis = serverNow();
+    if (nowMillis === null) {
+      setState("checking");
+      setCountdownStr("—");
+      setNowStr("—");
+      return;
+    }
+    const now = DateTime.fromMillis(nowMillis).setZone(tzId);
+    const { start, end, open } = postingWindow(now, emulatorWindowStartMillis);
     setNowStr(now.toFormat("HH:mm:ss"));
     setState(open ? "open" : "locked");
     setCountdownStr(open
@@ -97,7 +107,7 @@ export default function Gate() {
     compute();
     const id = setInterval(compute, 1000);
     return () => clearInterval(id);
-  }, [tzId]);
+  }, [tzId, serverNow]);
 
   useEffect(() => {
     if (state === "open")
@@ -223,7 +233,7 @@ export default function Gate() {
             textAlign: "center",
           }}
         >
-          {state === "open" ? "Make your wish ✨" : `Opens in ${countdownStr}`}
+          {state === "checking" ? "Syncing with the 11:11 clock…" : state === "open" ? "Make your wish ✨" : `Opens in ${countdownStr}`}
         </Animated.Text>
 
         {state === "open" && (
@@ -266,7 +276,7 @@ export default function Gate() {
         }}
       >
         <Text style={{ color: "rgba(255,255,255,0.6)" }}>
-          {state === "open"
+          {state === "checking" ? "Connect to check the posting window" : state === "open"
             ? `Window closes in ${countdownStr}`
             : "We’ll unlock right at 11:11"}
         </Text>
@@ -276,7 +286,10 @@ export default function Gate() {
           onPress={() => router.push("/compose")}
           style={{
             position: "absolute",
-            bottom: 28,
+            // Keep the development shortcut above the status/footer copy.
+            // Its previous bottom offset placed the button directly over the
+            // "We’ll unlock right at 11:11" message on smaller iPhones.
+            bottom: 84,
             right: 20,
             paddingVertical: 12,
             paddingHorizontal: 14,
