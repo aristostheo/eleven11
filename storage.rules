@@ -4,12 +4,19 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
     match /uploads/{uid}/{fileName} {
-      allow read: if true;
-      allow create: if isSignedIn() && request.auth.uid == uid
+      // Pending and private files are owner-only. Shared files become
+      // feed-readable only after the backend verifies ownership and marks them.
+      allow read: if isOwner(uid)
+                  || resource.metadata.visibility == "shared";
+      allow create: if isOwner(uid)
                     && request.resource.size < 3 * 1024 * 1024
-                    && request.resource.contentType.matches('image/.*');
-      allow delete: if isSignedIn() && request.auth.uid == uid;
+                    && request.resource.contentType.matches('image/.*')
+                    && request.resource.metadata.ownerUid == uid
+                    && request.resource.metadata.visibility == "pending";
+      allow update: if false;
+      allow delete: if isOwner(uid);
     }
   }
 }

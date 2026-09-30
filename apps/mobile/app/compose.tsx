@@ -20,7 +20,8 @@ import * as ImagePicker from "expo-image-picker";
 import * as Localization from "expo-localization";
 import { DateTime } from "luxon";
 import Svg, { Circle } from "react-native-svg";
-import { canPost, submitPost, ensureAuth, uploadPhoto, deleteUploadedPhoto } from "../src/lib/firebase";
+import { canPost, submitPost, ensureAuth, uploadPhoto, deleteUploadedPhoto, type UploadedPhoto } from "../src/lib/firebase";
+import { clearDraft, copyDraftPhoto, loadDraft, removeDraftPhoto, saveDraft, type DraftPhoto, type WishVisibility } from "../src/lib/drafts";
 import { useServerClock } from "../src/utils/useServerClock";
 
 import { postingWindow, WINDOW_SECONDS } from "../src/utils/time";
@@ -64,11 +65,10 @@ export default function Compose() {
   const { serverNow } = useServerClock();
 
   const [caption, setCaption] = useState("");
-  const [img, setImg] = useState<{
-    uri: string;
-    w?: number;
-    h?: number;
-  } | null>(null);
+  const [img, setImg] = useState<DraftPhoto | null>(null);
+  const [visibility, setVisibility] = useState<WishVisibility>("private");
+  const [draftUid, setDraftUid] = useState<string | null>(null);
+  const [draftReady, setDraftReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [windowLeft, setWindowLeft] = useState<string>("—");
   const [allowed, setAllowed] = useState<boolean | null>(null);
@@ -77,6 +77,7 @@ export default function Compose() {
   const pulse = useRef(new Animated.Value(0)).current;
   const cardIn = useRef(new Animated.Value(0)).current;
   const progress = useRef(new Animated.Value(0)).current;
+  const finalizingDraft = useRef(false);
 
   const ringSize = 80;
   const R = (ringSize - 8) / 2;
@@ -107,6 +108,29 @@ export default function Compose() {
     loop.start();
     return () => loop.stop();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void ensureAuth().then(async (user) => {
+      const draft = await loadDraft(user.uid);
+      if (!active) return;
+      setDraftUid(user.uid);
+      if (draft) {
+        setCaption(draft.caption);
+        setVisibility(draft.visibility);
+        setImg(draft.photo);
+      }
+      setDraftReady(true);
+    }).catch(() => { if (active) setDraftReady(true); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!draftUid || !draftReady || finalizingDraft.current) return;
+    const draft = { caption, visibility, photo: img, updatedAt: Date.now() };
+    const timer = setTimeout(() => { void saveDraft(draftUid, draft); }, 300);
+    return () => clearTimeout(timer);
+  }, [caption, draftReady, draftUid, img, visibility]);
 
   // Keep countdown + permission fresh
   const tick = async () => {
@@ -208,14 +232,33 @@ export default function Compose() {
     });
     if (!result.canceled) {
       const asset = result.assets[0];
-      setImg({ uri: asset.uri, w: asset.width, h: asset.height });
+      try {
+        const user = await ensureAuth();
+        const uri = await copyDraftPhoto(user.uid, asset.uri);
+        if (img) await removeDraftPhoto(img.uri);
+        setImg({ uri, w: asset.width, h: asset.height });
+      } catch (error) {
+        Alert.alert("Couldn’t save photo", error instanceof Error ? error.message : "Choose the photo again before posting.");
+      }
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
   };
 
-  const clearImage = () => {
+  const clearImage = async () => {
+    if (img) await removeDraftPhoto(img.uri);
     setImg(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const discardDraft = async () => {
+    if (!draftUid) return;
+    await clearDraft(draftUid, img);
+    finalizingDraft.current = true;
+    setCaption("");
+    setVisibility("private");
+    setImg(null);
+    setTimeout(() => { finalizingDraft.current = false; }, 0);
+    Alert.alert("Draft discarded");
   };
 
   const onSubmit = async () => {
@@ -233,19 +276,20 @@ export default function Compose() {
       return;
     }
 
-    let uploadedUrl: string | null = null;
+    let uploadedPhoto: UploadedPhoto | null = null;
     let posted = false;
     let safeToDeleteUpload = true;
     try {
       setSubmitting(true);
       await ensureAuth(); // just in case
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      if (img) uploadedUrl = await uploadPhoto(img.uri);
+      if (img) uploadedPhoto = await uploadPhoto(img.uri);
       const payload: any = {
         tzId,
         caption: caption.trim(),
+        visibility,
         media: img
-          ? { type: "image", url: uploadedUrl, w: img.w, h: img.h }
+          ? { type: "image", storagePath: uploadedPhoto?.storagePath, w: img.w, h: img.h }
           : { type: "none" },
       };
       // A lost response may still mean the post was committed. Preserve the image
@@ -253,9 +297,11 @@ export default function Compose() {
       safeToDeleteUpload = false;
       await submitPost(payload);
       posted = true;
+      finalizingDraft.current = true;
+      if (draftUid) await clearDraft(draftUid, img);
       setCaption("");
       setImg(null);
-      router.replace("/feed");
+      router.replace(visibility === "private" ? "/my-wishes" : "/feed");
     } catch (e) {
       const code = String((e as { code?: string })?.code ?? "").replace(/^functions\//, "");
       if (["already-exists", "failed-precondition", "invalid-argument", "unauthenticated"].includes(code)) {
@@ -263,8 +309,8 @@ export default function Compose() {
       }
       showFnError(e, "Failed to post");
     } finally {
-      if (uploadedUrl && !posted && safeToDeleteUpload) {
-        try { await deleteUploadedPhoto(uploadedUrl); }
+      if (uploadedPhoto && !posted && safeToDeleteUpload) {
+        try { await deleteUploadedPhoto(uploadedPhoto.storagePath); }
         catch (cleanupError) { console.warn("Could not clean up unused photo", cleanupError); }
       }
       setSubmitting(false);
@@ -432,6 +478,36 @@ export default function Compose() {
             </View>
           </View>
 
+          <View style={{ marginTop: 14, gap: 8 }}>
+            <Text style={{ color: "white", fontWeight: "700" }}>Who can see this wish?</Text>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              {([
+                ["private", "Only me"],
+                ["shared", "Share anonymously"],
+              ] as const).map(([value, label]) => (
+                <Pressable
+                  key={value}
+                  onPress={() => setVisibility(value)}
+                  style={{
+                    flex: 1,
+                    padding: 12,
+                    borderRadius: 14,
+                    borderWidth: 1,
+                    borderColor: visibility === value ? "#b797ff" : "rgba(255,255,255,0.18)",
+                    backgroundColor: visibility === value ? "rgba(166,124,255,0.26)" : "rgba(255,255,255,0.07)",
+                  }}
+                >
+                  <Text style={{ color: "white", fontWeight: "700" }}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={{ color: "rgba(255,255,255,0.68)", lineHeight: 19 }}>
+              {visibility === "shared"
+                ? "Anonymous wishes appear in the daily feed."
+                : "Only you can view this wish in My wishes."}
+            </Text>
+          </View>
+
           {/* Image attach */}
           <View style={{ marginTop: 14, flexDirection: "row", gap: 10 }}>
             {!img ? (
@@ -468,7 +544,7 @@ export default function Compose() {
                   style={{ width: 90, height: 90, borderRadius: 10 }}
                 />
                 <Pressable
-                  onPress={clearImage}
+                  onPress={() => void clearImage()}
                   style={{ paddingHorizontal: 10, paddingVertical: 8 }}
                 >
                   <Text style={{ color: "#ff9aa2", fontWeight: "700" }}>
@@ -496,6 +572,10 @@ export default function Compose() {
               </Text>
             </View>
           )}
+
+          <Pressable onPress={() => void discardDraft()} style={{ alignSelf: "flex-start", marginTop: 16, padding: 8 }}>
+            <Text style={{ color: "rgba(255,255,255,0.7)" }}>Discard draft</Text>
+          </Pressable>
 
           {/* Submit */}
           <Animated.View

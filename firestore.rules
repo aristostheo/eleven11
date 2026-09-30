@@ -14,9 +14,13 @@ service cloud.firestore {
     match /posts/{postId} {
       // Writes only via Cloud Functions using Admin SDK; block direct client writes.
       allow create, update, delete: if false;
-      // The read-only feed exposes active wishes only. Firestore evaluates this
-      // against the query constraint as well as individual document reads.
-      allow read: if resource.data.status == "active";
+      // New shared-feed and history results are callable-shaped so they never
+      // expose owner UIDs. Owners may still read their own document directly.
+      // Legacy active documents, which predate visibility, retain their old
+      // shared direct-read behavior until a reviewed migration labels them.
+      allow read: if isOwner(resource.data.uid)
+                  || (resource.data.status == "active"
+                      && !resource.data.keys().hasAny(["visibility"]));
     }
 
     match /reports/{id} {
