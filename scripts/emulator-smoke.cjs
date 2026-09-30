@@ -3,36 +3,23 @@ const { DateTime } = require("../functions/node_modules/luxon");
 
 const host = process.env.EXPO_PUBLIC_FIREBASE_EMULATOR_HOST || "127.0.0.1";
 const project = "eleven11-aristos";
-const functionsBase = `http://${host}:5001/${project}/us-central1`;
-const authBase = `http://${host}:9099/identitytoolkit.googleapis.com/v1`;
-// Match the app's configured default bucket so the emulator loads the same
-// Storage Rules target used by the client.
-const emulatorBucket = "eleven11-aristos.firebasestorage.app";
+const bucket = "eleven11-aristos.firebasestorage.app";
+const functionsPort = process.env.ELEVEN11_FUNCTIONS_EMULATOR_PORT || "5001";
+const authPort = process.env.ELEVEN11_AUTH_EMULATOR_PORT || "9099";
+const firestorePort = process.env.ELEVEN11_FIRESTORE_EMULATOR_PORT || "8080";
+const storagePort = process.env.ELEVEN11_STORAGE_EMULATOR_PORT || "9199";
+const functionsBase = `http://${host}:${functionsPort}/${project}/us-central1`;
 
 const json = async (response) => {
   const body = await response.text();
   return { status: response.status, body: body ? JSON.parse(body) : null };
 };
 
-async function newIdentity() {
-  const response = await fetch(`${authBase}/accounts:signUp?key=emulator`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: "{}",
-  });
-  const result = await json(response);
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  return result.body;
-}
-
 async function call(name, token, data) {
+  const headers = { "content-type": "application/json" };
+  if (token) headers.authorization = `Bearer ${token}`;
   const response = await fetch(`${functionsBase}/${name}`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ data }),
+    method: "POST", headers, body: JSON.stringify({ data }),
   });
   return json(response);
 }
@@ -43,129 +30,126 @@ async function main() {
   const windowStart = Date.parse(process.env.ELEVEN11_EMULATOR_WINDOW_START || "");
   assert(Number.isFinite(now) && Number.isFinite(windowStart), "Set emulator clock variables");
 
-  const first = await newIdentity();
-  const clock = await call("getServerTime", first.idToken, {});
-  assert.equal(clock.status, 200, JSON.stringify(clock.body));
-  const expectedNow = now + (Date.now() - realStart);
-  console.log(JSON.stringify({ emulatorClock: clock.body.result.serverMillis, expectedNow }));
-  assert(Math.abs(clock.body.result.serverMillis - expectedNow) < 60000);
-
-  const missingAuth = await fetch(`${functionsBase}/canPost`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ data: { tzId: "America/Toronto", clientNow: 0 } }),
-  }).then(json);
-  assert.equal(missingAuth.status, 401, JSON.stringify(missingAuth.body));
-
-  // Leave a small startup margin: the Functions worker captures its real-time
-  // anchor when it first loads, shortly after this script starts.
-  const waitMs = Math.max(0, windowStart - (now + (Date.now() - realStart)) + 5000);
-  if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
-  const textPayload = {
-    tzId: "America/Toronto",
-    caption: "emulator text smoke",
-    media: { type: "none" },
-  };
-  const text = await call("submitPost", first.idToken, textPayload);
-  assert.equal(text.status, 200, JSON.stringify(text.body));
-  const textDuplicate = await call("submitPost", first.idToken, textPayload);
-  assert.equal(textDuplicate.status, 409, JSON.stringify(textDuplicate.body));
-  assert.equal(textDuplicate.body.error.status, "ALREADY_EXISTS");
-
   const { initializeApp } = require("../apps/mobile/node_modules/firebase/app");
   const { getAuth, connectAuthEmulator, signInAnonymously } = require("../apps/mobile/node_modules/firebase/auth");
   const { getStorage, connectStorageEmulator, ref, uploadBytes, getDownloadURL, deleteObject } = require("../apps/mobile/node_modules/firebase/storage");
-  const { getFirestore, connectFirestoreEmulator, collection, doc, getDoc, getDocs, limit, orderBy, query, startAfter, terminate, where } = require("../apps/mobile/node_modules/firebase/firestore");
-  const clientApp = initializeApp({ projectId: project, storageBucket: emulatorBucket, apiKey: "emulator" }, "storage-smoke");
-  const clientAuth = getAuth(clientApp);
-  connectAuthEmulator(clientAuth, `http://${host}:9099`, { disableWarnings: true });
-  await signInAnonymously(clientAuth);
-  const second = { localId: clientAuth.currentUser.uid, idToken: await clientAuth.currentUser.getIdToken() };
-  const objectPath = `uploads/${second.localId}/emulator.png`;
-  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
-  const clientStorage = getStorage(clientApp);
-  connectStorageEmulator(clientStorage, host, 9199);
-  const uploaded = await uploadBytes(ref(clientStorage, objectPath), png, { contentType: "image/png" });
-  const uploadUrl = await getDownloadURL(uploaded.ref);
+  const { getFirestore, connectFirestoreEmulator, doc, getDoc } = require("../apps/mobile/node_modules/firebase/firestore");
 
-  const attackerApp = initializeApp({ projectId: project, storageBucket: emulatorBucket, apiKey: "emulator" }, "storage-attacker");
-  const attackerAuth = getAuth(attackerApp);
-  connectAuthEmulator(attackerAuth, `http://${host}:9099`, { disableWarnings: true });
-  await signInAnonymously(attackerAuth);
-  const attackerStorage = getStorage(attackerApp);
-  connectStorageEmulator(attackerStorage, host, 9199);
-  await assert.rejects(
-    uploadBytes(ref(attackerStorage, objectPath), png, { contentType: "image/png" }),
-    { code: "storage/unauthorized" },
-  );
-  await deleteObject(uploaded.ref);
-  const feedPhotoRef = ref(clientStorage, `uploads/${second.localId}/feed-photo.png`);
-  await uploadBytes(feedPhotoRef, png, { contentType: "image/png" });
-  const media = await getDownloadURL(feedPhotoRef);
-  const photoPayload = {
-    tzId: "America/Toronto",
-    caption: "emulator photo smoke",
-    media: { type: "image", url: media, w: 1, h: 1 },
-  };
-  const photo = await call("submitPost", second.idToken, photoPayload);
-  assert.equal(photo.status, 200, JSON.stringify(photo.body));
-  const photoDuplicate = await call("submitPost", second.idToken, photoPayload);
-  assert.equal(photoDuplicate.status, 409, JSON.stringify(photoDuplicate.body));
-  assert.equal(photoDuplicate.body.error.status, "ALREADY_EXISTS");
-
-  const extraPostIds = [];
-  for (let index = 0; index < 5; index += 1) {
-    const identity = await newIdentity();
-    const post = await call("submitPost", identity.idToken, {
-      tzId: "America/Toronto",
-      caption: `feed pagination ${index}`,
-      media: { type: "none" },
-    });
-    assert.equal(post.status, 200, JSON.stringify(post.body));
-    extraPostIds.push(post.body.result.postId);
+  async function identity(name) {
+    const app = initializeApp({ projectId: project, storageBucket: bucket, apiKey: "emulator" }, name);
+    const auth = getAuth(app);
+    connectAuthEmulator(auth, `http://${host}:${authPort}`, { disableWarnings: true });
+    await signInAnonymously(auth);
+    const user = auth.currentUser;
+    const storage = getStorage(app);
+    connectStorageEmulator(storage, host, Number(storagePort));
+    const firestore = getFirestore(app);
+    connectFirestoreEmulator(firestore, host, Number(firestorePort));
+    return { app, user, token: await user.getIdToken(), storage, firestore };
   }
 
-  const { initializeApp: initializeAdminApp, getApps: getAdminApps } = require("../functions/node_modules/firebase-admin/lib/app");
-  const { getFirestore: getAdminFirestore } = require("../functions/node_modules/firebase-admin/lib/firestore");
-  if (!getAdminApps().length) initializeAdminApp({ projectId: project });
+  const first = await identity("journal-owner");
+  const second = await identity("journal-other");
+  const clock = await call("getServerTime", first.token, {});
+  assert.equal(clock.status, 200, JSON.stringify(clock.body));
+  assert(Math.abs(clock.body.result.serverMillis - (now + Date.now() - realStart)) < 60000);
+  const missingAuth = await call("canPost", null, { tzId: "America/Toronto" });
+  assert.equal(missingAuth.status, 401, JSON.stringify(missingAuth.body));
+
+  const waitMs = Math.max(0, windowStart - (now + Date.now() - realStart) + 2000);
+  if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  const privatePath = `uploads/${first.user.uid}/private.png`;
+  await uploadBytes(ref(first.storage, privatePath), png, {
+    contentType: "image/png",
+    customMetadata: { ownerUid: first.user.uid, visibility: "pending" },
+  });
+
+  const privatePost = await call("submitPost", first.token, {
+    tzId: "America/Toronto", caption: "private image", visibility: "private",
+    media: { type: "image", storagePath: privatePath, w: 1, h: 1 },
+  });
+  assert.equal(privatePost.status, 200, JSON.stringify(privatePost.body));
+  const duplicateAcrossVisibility = await call("submitPost", first.token, {
+    tzId: "America/Toronto", caption: "should be rejected", visibility: "shared", media: { type: "none" },
+  });
+  assert.equal(duplicateAcrossVisibility.status, 409, JSON.stringify(duplicateAcrossVisibility.body));
+
+  const sharedPath = `uploads/${second.user.uid}/shared.png`;
+  await uploadBytes(ref(second.storage, sharedPath), png, {
+    contentType: "image/png",
+    customMetadata: { ownerUid: second.user.uid, visibility: "pending" },
+  });
+  const sharedPost = await call("submitPost", second.token, {
+    tzId: "America/Toronto", caption: "shared image", visibility: "shared",
+    media: { type: "image", storagePath: sharedPath, w: 1, h: 1 },
+  });
+  assert.equal(sharedPost.status, 200, JSON.stringify(sharedPost.body));
+
+  // Owner can read private data; another identity cannot read its document,
+  // get an image URL, or retrieve private image bytes through the callable.
+  await getDoc(doc(first.firestore, "posts", privatePost.body.result.postId));
+  await assert.rejects(getDoc(doc(second.firestore, "posts", privatePost.body.result.postId)), { code: "permission-denied" });
+  const ownerImage = await call("getPrivateImage", first.token, { storagePath: privatePath });
+  assert.equal(ownerImage.status, 200, JSON.stringify(ownerImage.body));
+  assert(ownerImage.body.result.dataUrl.startsWith("data:image/png;base64,"));
+  const otherImage = await call("getPrivateImage", second.token, { storagePath: privatePath });
+  assert.equal(otherImage.status, 403, JSON.stringify(otherImage.body));
+  await assert.rejects(getDownloadURL(ref(second.storage, privatePath)), { code: "storage/unauthorized" });
+  assert((await getDownloadURL(ref(second.storage, sharedPath))).includes("shared.png"));
+
+  const { initializeApp: initializeAdminApp, getApps } = require("../functions/node_modules/firebase-admin/lib/app");
+  const { getFirestore: getAdminFirestore, Timestamp } = require("../functions/node_modules/firebase-admin/lib/firestore");
+  if (!getApps().length) initializeAdminApp({ projectId: project, storageBucket: bucket });
   const adminDb = getAdminFirestore();
-  await adminDb.collection("posts").doc(extraPostIds[0]).update({ status: "hidden" });
-  const photoDoc = await adminDb.collection("posts").doc(photo.body.result.postId).get();
-  const feedStart = DateTime.fromMillis(photoDoc.data().createdAt.toMillis(), {
-    zone: "America/Toronto",
-  }).startOf("day");
-  const feedEnd = feedStart.plus({ days: 1 });
+  const createdAt = Timestamp.fromMillis(now + (Date.now() - realStart));
+  await adminDb.collection("posts").doc("older-owner").set({
+    uid: first.user.uid, createdAt: Timestamp.fromMillis(createdAt.toMillis() - 86400000), dayKey: "older",
+    caption: "older private wish", visibility: "private", media: { type: "none" }, status: "active",
+  });
+  for (let index = 0; index < 11; index += 1) {
+    await adminDb.collection("posts").doc(`shared-page-${index}`).set({
+      uid: `seed-${index}`, createdAt: Timestamp.fromMillis(createdAt.toMillis() - index - 10), dayKey: "seed",
+      caption: `shared page ${index}`, visibility: "shared", media: { type: "none" }, status: "active",
+    });
+  }
 
-  const feedDb = getFirestore(clientApp);
-  connectFirestoreEmulator(feedDb, host, 8080);
-  const feedBase = query(
-    collection(feedDb, "posts"),
-    where("status", "==", "active"),
-    where("createdAt", ">=", feedStart.toJSDate()),
-    where("createdAt", "<", feedEnd.toJSDate()),
-    orderBy("createdAt", "desc"),
-  );
-  const firstPage = await getDocs(query(feedBase, limit(3)));
-  const secondPage = await getDocs(query(feedBase, startAfter(firstPage.docs[firstPage.docs.length - 1]), limit(3)));
-  assert.equal(firstPage.docs.length, 3);
-  assert.equal(secondPage.docs.length, 3);
-  const pagedIds = [...firstPage.docs, ...secondPage.docs].map((entry) => entry.id);
-  assert(!pagedIds.includes(extraPostIds[0]), "Hidden posts must not appear in the feed");
-  assert(pagedIds.includes(photo.body.result.postId), "Photo posts must appear in the feed");
-  await assert.rejects(getDoc(doc(feedDb, "posts", extraPostIds[0])), { code: "permission-denied" });
-  await terminate(feedDb);
+  const history = await call("getMyWishes", first.token, {});
+  assert.equal(history.status, 200, JSON.stringify(history.body));
+  assert.equal(history.body.result.wishes.length, 2);
+  assert(history.body.result.wishes.every((wish) => wish.visibility === "private"));
+  const otherHistory = await call("getMyWishes", second.token, {});
+  assert.equal(otherHistory.status, 200, JSON.stringify(otherHistory.body));
+  assert.equal(otherHistory.body.result.wishes.length, 1);
 
+  const firstFeed = await call("getDailyWishes", null, { tzId: "America/Toronto" });
+  assert.equal(firstFeed.status, 200, JSON.stringify(firstFeed.body));
+  assert.equal(firstFeed.body.result.wishes.length, 10);
+  const secondFeed = await call("getDailyWishes", null, { tzId: "America/Toronto", cursor: firstFeed.body.result.cursor });
+  assert.equal(secondFeed.status, 200, JSON.stringify(secondFeed.body));
+  assert(secondFeed.body.result.wishes.length >= 1);
+  const feedWishes = [...firstFeed.body.result.wishes, ...secondFeed.body.result.wishes];
+  assert(feedWishes.some((wish) => wish.id === sharedPost.body.result.postId));
+  assert(!feedWishes.some((wish) => wish.id === privatePost.body.result.postId));
+  assert(feedWishes.every((wish) => !("uid" in wish)));
+
+  const temporaryPath = `uploads/${first.user.uid}/temporary.png`;
+  await uploadBytes(ref(first.storage, temporaryPath), png, {
+    contentType: "image/png",
+    customMetadata: { ownerUid: first.user.uid, visibility: "pending" },
+  });
+  await deleteObject(ref(first.storage, temporaryPath));
   console.log(JSON.stringify({
-    clockMillis: clock.body.result.serverMillis,
-    textPostId: text.body.result.postId,
-    photoPostId: photo.body.result.postId,
-    duplicateStatuses: [textDuplicate.status, photoDuplicate.status],
-    storageRuleChecks: { ownerUpload: true, crossUserUploadRejected: true, ownerDelete: true },
-    feedChecks: { pagination: true, hiddenPostExcluded: true, hiddenPostReadRejected: true },
+    privatePostId: privatePost.body.result.postId,
+    sharedPostId: sharedPost.body.result.postId,
+    privacy: { ownerPrivateRead: true, otherPrivateRejected: true, noPrivateTokenUrl: true },
+    feed: { sharedAnonymous: true, privateExcluded: true, pagination: true },
+    history: { ownerOlderWish: true, otherIsolated: true },
+    duplicateAcrossVisibility: duplicateAcrossVisibility.status,
   }));
 }
 
-main().catch((error) => {
+main().then(() => process.exit(0)).catch((error) => {
   console.error(error.stack || error);
-  process.exitCode = 1;
+  process.exit(1);
 });

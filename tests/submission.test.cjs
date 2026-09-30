@@ -32,7 +32,7 @@ Module._load = function (name, ...args) {
 };
 const { submitPost } = require('../functions/lib/index');
 Module._load = originalLoad;
-const payload = { tzId: 'UTC', caption: ' A wish ', media: { type: 'none' } };
+const payload = { tzId: 'UTC', caption: ' A wish ', visibility: 'private', media: { type: 'none' } };
 const auth = { auth: { uid: 'test-user' } };
 
 test('callable enforces authentication, payload validation, window and concurrent duplicates', async () => {
@@ -51,6 +51,7 @@ test('callable enforces authentication, payload validation, window and concurren
     const posts = [...stored.entries()].filter(([key]) => key.startsWith('posts/'));
     assert.equal(posts.length, 1);
     assert.equal(posts[0][1].caption, 'A wish');
+    assert.equal(posts[0][1].visibility, 'private');
   } finally {
     DateTime.now = originalNow;
   }

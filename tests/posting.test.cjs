@@ -52,11 +52,11 @@ test('daily feed local range follows Toronto daylight saving boundaries', () => 
   assert.equal(DateTime.fromMillis(range.endMillis).toUTC().toISO(), '2026-03-09T04:00:00.000Z');
   assert.equal(range.endMillis - range.startMillis, 23 * 60 * 60 * 1000);
 });
-test('reject invalid zones and phone-local or missing photo URLs', () => {
+test('reject invalid zones and unowned or missing photo storage paths', () => {
   assert.equal(timezoneSchema.safeParse('invalid-zone').success, false);
   assert.equal(timezoneSchema.safeParse('America/Toronto').success, true);
-  for (const media of [{ type: 'image' }, { type: 'image', url: 'file:///photo.jpg' }]) {
+  for (const media of [{ type: 'image' }, { type: 'image', storagePath: 'file:///photo.jpg' }]) {
     assert.equal(mediaSchema.safeParse(media).success, false);
   }
-  assert.equal(mediaSchema.safeParse({ type: 'image', url: 'https://example.com/photo.jpg' }).success, true);
+  assert.equal(mediaSchema.safeParse({ type: 'image', storagePath: 'uploads/account/photo.jpg' }).success, true);
 });

@@ -11,7 +11,8 @@ import {
 import { router } from "expo-router";
 import { DateTime } from "luxon";
 import { LinearGradient } from "expo-linear-gradient";
-import { feedDayKey, loadDailyFeed, type Wish } from "../src/lib/feed";
+import { feedDayKey, loadDailyFeed, type FeedCursor, type Wish, type WishMedia } from "../src/lib/feed";
+import { getSharedPhotoUrl } from "../src/lib/firebase";
 import { useServerClock } from "../src/utils/useServerClock";
 
 export default function DailyFeed() {
@@ -20,7 +21,7 @@ export default function DailyFeed() {
   const now = serverNow();
   const dateKey = now === null ? null : feedDayKey(now, tzId);
   const [wishes, setWishes] = useState<Wish[]>([]);
-  const [cursor, setCursor] = useState<Parameters<typeof loadDailyFeed>[2]>(null);
+  const [cursor, setCursor] = useState<FeedCursor>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -32,7 +33,7 @@ export default function DailyFeed() {
     setRefreshing(true);
     setError(null);
     try {
-      const page = await loadDailyFeed(dateKey, tzId);
+      const page = await loadDailyFeed(tzId);
       setWishes(page.wishes);
       setCursor(page.cursor);
       setHasMore(page.hasMore);
@@ -53,7 +54,7 @@ export default function DailyFeed() {
     if (!dateKey || !cursor || !hasMore || loadingMore) return;
     setLoadingMore(true);
     try {
-      const page = await loadDailyFeed(dateKey, tzId, cursor);
+      const page = await loadDailyFeed(tzId, cursor);
       setWishes((current) => [...current, ...page.wishes]);
       setCursor(page.cursor);
       setHasMore(page.hasMore);
@@ -85,6 +86,9 @@ export default function DailyFeed() {
           <View style={{ gap: 8, marginBottom: 8 }}>
             <Pressable onPress={() => router.back()} hitSlop={12}>
               <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 16 }}>← Back</Text>
+            </Pressable>
+            <Pressable onPress={() => router.push("/my-wishes")} hitSlop={12}>
+              <Text style={{ color: "#d7c7ff", fontSize: 16, fontWeight: "700" }}>My wishes</Text>
             </Pressable>
             <Text style={{ color: "white", fontSize: 30, fontWeight: "800" }}>Daily wishes</Text>
             <Text style={{ color: "rgba(255,255,255,0.68)" }}>{subtitle}</Text>
@@ -131,12 +135,19 @@ function WishCard({ wish }: { wish: Wish }) {
   return (
     <View style={{ backgroundColor: "rgba(255,255,255,0.1)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: 20, padding: 16, gap: 12 }}>
       <Text style={{ color: "white", fontSize: 17, lineHeight: 24 }}>{wish.caption}</Text>
-      {wish.media.type === "image" ? (
-        <Image source={{ uri: wish.media.url }} style={{ width: "100%", aspectRatio: 1, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.12)" }} resizeMode="cover" />
-      ) : null}
+      {wish.media.type === "image" ? <SharedWishImage media={wish.media} /> : null}
       <Text style={{ color: "rgba(255,255,255,0.58)", fontSize: 13 }}>Posted {postedAt}</Text>
     </View>
   );
+}
+
+function SharedWishImage({ media }: { media: WishMedia }) {
+  const [uri, setUri] = useState(media.sharedUrl ?? null);
+  useEffect(() => {
+    if (media.sharedUrl || !media.storagePath) return;
+    void getSharedPhotoUrl(media.storagePath).then(setUri).catch(() => setUri(null));
+  }, [media.sharedUrl, media.storagePath]);
+  return uri ? <Image source={{ uri }} style={{ width: "100%", aspectRatio: 1, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.12)" }} resizeMode="cover" /> : null;
 }
 
 function StateCard({ message, action, onPress }: { message: string; action: string; onPress: () => void }) {

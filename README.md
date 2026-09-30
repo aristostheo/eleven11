@@ -64,6 +64,35 @@ rules. Images must be smaller than 3 MB. Posting now uses an atomic daily claim
 to reject concurrent duplicates. Keep client and backend updates together.
 No deployment is performed by local checks.
 
+## Wish visibility and personal journal
+
+Compose defaults to **Only me**. Those wishes, including their captions and
+photos, appear only in **My wishes** for the current Firebase identity.
+**Share anonymously** adds a wish to the daily feed without exposing the owner
+UID or other account data. Both choices use the same 11:11 window and consume
+the same author-local one-post-per-day allowance; visibility cannot be changed
+after posting. Private image objects have their upload token removed after the
+server verifies object ownership, and are returned only as authenticated private
+image data rather than public download-token URLs.
+
+**My wishes** is available from both the clock and daily feed. It spans older
+days and supports refresh and pagination. It belongs to the existing Firebase
+identity: anonymous account recovery is not implemented, so clearing app data or
+changing identity loses access to that journal.
+
+Caption, visibility, and the selected image are saved per Firebase UID while a
+draft is pending. Supported devices copy the image into the app's document
+directory, so it survives an app restart. A failed submission keeps the draft;
+a confirmed post or **Discard draft** clears it.
+
+Existing posts have no visibility field and retain their old shared behavior.
+The callable feed treats them as shared during transition. Before tightening
+legacy direct-read access, first deploy the v0.4 functions/rules/index and run
+a reviewed administrative migration that writes `visibility: "shared"` to each
+legacy active post. [scripts/migrate-legacy-shared.cjs](scripts/migrate-legacy-shared.cjs)
+is deliberately emulator-only preparation; it refuses production and performs
+no changes unless its explicit emulator apply flag is set.
+
 ## Daily wish feed
 
 The clock screen always includes **View daily wishes**. The feed reads only
@@ -86,7 +115,8 @@ blocked.
 
 Changing a post to non-active removes it from future Firestore feed reads, but
 does **not** revoke an image URL that was already public and shared. Media
-revocation and moderation remain a separate milestone.
+revocation and moderation remain a separate milestone. Private image delivery
+does not use those public URLs.
 
 In development, **Preview compose** lets you inspect the composer at any time.
 It does not bypass server posting restrictions. Release builds hide this link.

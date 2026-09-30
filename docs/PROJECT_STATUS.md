@@ -2,10 +2,10 @@
 
 ## What exists
 
-Eleven11 is a posting prototype with a read-only daily feed. The app
-routes are the clock (`app/index.tsx`), composer (`app/compose.tsx`), and feed
-(`app/feed.tsx`). Items below distinguish the implemented v0.3 scope from
-remaining product work.
+Eleven11 is a posting prototype with a read-only daily feed and private wish
+journal. The app routes are the clock (`app/index.tsx`), composer
+(`app/compose.tsx`), feed (`app/feed.tsx`), and journal (`app/my-wishes.tsx`).
+Items below distinguish the implemented local v0.4 scope from remaining product work.
 
 Implemented locally:
 
@@ -26,27 +26,35 @@ Implemented locally:
 - Regression tests for time boundaries, timezone rollover, invalid media and
   payloads, and duplicate submissions with a mock transaction adapter.
 - npm lockfiles and GitHub Actions checks for the app and backend.
+- Compose visibility choices: private by default, or anonymously shared.
+  The backend validates the choice and applies the same daily posting limit.
+- Personal journal with owner-only history, labels, images, refresh, and pagination.
+- Per-identity saved drafts, with durable local copies of selected photos where
+  `expo-file-system` provides a document directory.
+- Private-post Firestore and Storage protection: private documents are owner-only;
+  the backend verifies the uploaded object owner/path and clears private download
+  tokens before storing the post. The feed is callable-backed and omits owner UIDs.
 
 ## Unfinished features and integration work
 
 | Priority | Area | Evidence / gap | Completion target |
 | --- | --- | --- | --- |
-| First | Firebase/device integration | Client uses a real Firebase project; no live deployment or device posting test was performed in this review. | Verify anonymous auth, actual bucket, deployed functions/rules, text/photo submission and duplicate rejection on iPhone. |
+| First | Firebase/device integration | v0.4 was exercised only in isolated emulators; no live deployment or device posting test was performed. | Deploy reviewed functions/rules/indexes, then verify private/shared text/photo submission on iPhone. |
 | First | Feed moderation and media revocation | The feed hides non-active Firestore documents, but an already shared public Storage download URL remains usable. | Use revocable media delivery and moderation actions before claiming hidden media is inaccessible. |
 | Before public launch | Reactions | Only zero-valued `reacts.sparkle` and `reacts.crystal` fields are created. No UI or callable updates them. | Reaction controls, authenticated server mutation, duplicate/toggle policy and tests. |
 | Before public launch | Reports and moderation | Only a report counter and a permissive signed-in `/reports` create rule exist. No report UI, validated payload, review flow or moderation actions. The feed excludes non-active Firestore documents but cannot revoke public image URLs already shared. | Define/report reasons, validate ownership/target data, rate-limit reports, moderation actions, and revocable media delivery. |
 | Before public launch | Posting identity/timezone policy | Anonymous users can reset their identity; the timezone comes from the caller. Daily claims protect one UID/date, not one person or a rolling 24 hours. | Define stable account and timezone-change rules if a stronger daily limit is required. |
-| Before public launch | Media lifecycle and ownership | Upload precedes submission; a failed/expired submission can leave an orphan. Backend accepts any HTTPS image URL without checking the uploaded object's owner. | Associate uploads with the submitting user/post, clean up abandoned objects, and define post/media deletion. |
-| Next | Draft/retry experience | Caption and image exist only in component state. Image-picker exceptions have no visible recovery, and no draft restoration or upload progress exists. | Preserve drafts, show recoverable failures and upload progress, and prevent accidental loss on navigation. |
+| Before public launch | Media lifecycle and ownership | The backend now verifies the uploader UID, path, image type, and size before accepting an object reference; failed or expired submissions can still leave an orphan if cleanup cannot complete. | Add scheduled orphan cleanup and define post/media deletion. |
+| Next | Draft/retry experience | Drafts restore caption, visibility, and durable local photos; no upload progress UI exists. | Add upload progress and device-level recovery testing. |
 | Next | Responsive layout/accessibility | Fixed offsets/heights and initial screen dimensions; image buttons have no explicit accessibility labels. No native visual or assistive-technology testing yet. | Check safe areas, small screens, keyboard, screen reader, large text and reduced motion on devices. |
 | Next | Feed detail and historical views | The feed is intentionally limited to the viewer's current local day. There is no post detail route, author history, or historical archive. | Make product decisions before adding history or profiles. |
 | Next | Release packaging | No EAS build profiles, app icons, native bundle identifiers, or release/deployment workflow. | Configure these when a standalone install/release is wanted; Expo Go preview does not require them. |
 
 ## Optional expansion, not implemented or yet specified
 
-Profiles, permanent sign-in/account recovery, personal post history, notifications
-and 11:11 reminders, friends/following, sharing and post editing are absent. These
-need product decisions; their absence does not indicate broken existing code.
+Profiles, permanent sign-in/account recovery, notifications and 11:11 reminders,
+friends/following, sharing and post editing are absent. Journal access is tied to
+the current Firebase identity, and account recovery is not implemented.
 
 ## Checks completed on 2026-09-28
 
@@ -105,3 +113,20 @@ Track upstream-compatible fixes and assess runtime exposure before public releas
 Before reactions or social features, settle moderation and media revocation:
 hiding a Firestore post cannot invalidate a public image URL that was already
 shared. Then revisit stable identity/timezone policy and media ownership.
+
+## v0.4 verification — wish journal
+
+- Isolated Firebase Emulator Suite run passed using two anonymous identities:
+  owner private document/image access worked; the second identity was rejected
+  by Firestore, Storage, and the private-image callable; shared posts appeared
+  in the UID-free anonymous feed; private posts did not.
+- The same run confirmed history includes a seeded older owner wish, identity
+  isolation, daily-feed pagination, and one-per-local-day rejection across a
+  private post followed by a shared attempt. The test also verified the upload
+  path and owner metadata, then performed owner cleanup of a pending object.
+- Mobile typecheck, Functions build/lint, ten regression tests, and Expo export
+  for iOS, Android, and web passed. No live Firebase data, rules, indexes, or
+  functions were deployed.
+- Deployment requirement: deploy the v0.4 Functions, Firestore rules and the
+  `uid, createdAt` history index, and Storage rules together. Existing posts
+  without `visibility` retain shared compatibility until a reviewed migration.

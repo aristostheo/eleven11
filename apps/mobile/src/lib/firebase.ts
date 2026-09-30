@@ -18,7 +18,6 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getFunctions, httpsCallable, connectFunctionsEmulator } from "firebase/functions";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator } from "firebase/storage";
-import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { emulatorEnabled, emulatorHost } from "../utils/emulator";
 
 // --- eleven11 config ---
@@ -82,13 +81,14 @@ if (emulatorEnabled) {
 // ---- Functions ----
 const functions = getFunctions(app, "us-central1");
 if (emulatorEnabled) connectFunctionsEmulator(functions, emulatorHost, 5001);
-export const firestore = getFirestore(app);
-if (emulatorEnabled) connectFirestoreEmulator(firestore, emulatorHost, 8080);
 const storage = getStorage(app);
 if (emulatorEnabled) connectStorageEmulator(storage, emulatorHost, 9199);
 const _canPost = httpsCallable(functions, "canPost");
 const _submitPost = httpsCallable(functions, "submitPost");
 const _getServerTime = httpsCallable<undefined, { serverMillis: number }>(functions, "getServerTime");
+const _getDailyWishes = httpsCallable(functions, "getDailyWishes");
+const _getMyWishes = httpsCallable(functions, "getMyWishes");
+const _getPrivateImage = httpsCallable(functions, "getPrivateImage");
 
 // Ensure a signed-in user (silent anonymous)
 let signInPromise: Promise<User> | null = null;
@@ -103,20 +103,35 @@ export async function ensureAuth(): Promise<User> {
   return signInPromise;
 }
 
-export async function uploadPhoto(uri: string): Promise<string> {
+export type UploadedPhoto = { storagePath: string; w?: number; h?: number };
+
+export async function uploadPhoto(uri: string): Promise<UploadedPhoto> {
   const user = await ensureAuth();
   const response = await fetch(uri);
   const blob = await response.blob();
   if (blob.size >= 3 * 1024 * 1024) {
     throw new Error("Choose a photo smaller than 3 MB.");
   }
-  const photoRef = ref(storage, `uploads/${user.uid}/${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  await uploadBytes(photoRef, blob, { contentType: blob.type || "image/jpeg" });
-  return getDownloadURL(photoRef);
+  const storagePath = `uploads/${user.uid}/${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const photoRef = ref(storage, storagePath);
+  await uploadBytes(photoRef, blob, {
+    contentType: blob.type || "image/jpeg",
+    customMetadata: { ownerUid: user.uid, visibility: "pending" },
+  });
+  return { storagePath };
 }
 
-export async function deleteUploadedPhoto(url: string): Promise<void> {
-  await deleteObject(ref(storage, url));
+export async function deleteUploadedPhoto(storagePath: string): Promise<void> {
+  await deleteObject(ref(storage, storagePath));
+}
+
+export async function getSharedPhotoUrl(storagePath: string): Promise<string> {
+  return getDownloadURL(ref(storage, storagePath));
+}
+
+export async function getPrivatePhotoDataUrl(storagePath: string): Promise<string> {
+  const { data } = await _getPrivateImage({ storagePath }) as { data: { dataUrl: string } };
+  return data.dataUrl;
 }
 
 export async function getServerTime(): Promise<number> {
@@ -132,7 +147,16 @@ export function canPost(payload: { tzId: string; clientNow: number }) {
 export function submitPost(payload: {
   tzId: string;
   caption: string;
-  media: { type: "image" | "none"; url?: string; w?: number; h?: number };
+  visibility: "private" | "shared";
+  media: { type: "image" | "none"; storagePath?: string; w?: number; h?: number };
 }) {
   return _submitPost(payload);
+}
+
+export function getDailyWishes(payload: { tzId: string; cursor?: { createdAtMillis: number; id: string } | null }) {
+  return _getDailyWishes(payload);
+}
+
+export function getMyWishes(payload: { cursor?: { createdAtMillis: number; id: string } | null }) {
+  return _getMyWishes(payload);
 }

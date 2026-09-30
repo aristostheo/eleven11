@@ -249,6 +249,19 @@ export default function Gate() {
           <Text style={{ color: "white", fontWeight: "700" }}>View daily wishes</Text>
         </Pressable>
 
+        <Pressable
+          onPress={() => router.push("/my-wishes")}
+          style={{
+            paddingHorizontal: 20,
+            paddingVertical: 11,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.45)",
+          }}
+        >
+          <Text style={{ color: "white", fontWeight: "700" }}>My wishes</Text>
+        </Pressable>
+
         {state === "open" && (
           <Animated.View
             style={{
