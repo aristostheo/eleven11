@@ -29,7 +29,6 @@ import { emulatorWindowStartMillis } from "../src/utils/emulator";
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const MAX_CHARS = 280;
 type CanPostData = { allowed: boolean; reason: string | null; dayKey?: string };
-type SubmitData = { postId: string };
 
 /** Clearer error helper */
 const showFnError = (err: any, fallback = "Action failed") => {
@@ -252,15 +251,11 @@ export default function Compose() {
       // A lost response may still mean the post was committed. Preserve the image
       // unless the backend definitively rejected the submission.
       safeToDeleteUpload = false;
-      const res = (await submitPost(payload)) as unknown as {
-        data: SubmitData;
-      };
+      await submitPost(payload);
       posted = true;
-      const id = res?.data?.postId ?? "—";
-      Alert.alert("Posted ✨", `Your wish is live.\nID: ${id}`);
       setCaption("");
       setImg(null);
-      router.back();
+      router.replace("/feed");
     } catch (e) {
       const code = String((e as { code?: string })?.code ?? "").replace(/^functions\//, "");
       if (["already-exists", "failed-precondition", "invalid-argument", "unauthenticated"].includes(code)) {

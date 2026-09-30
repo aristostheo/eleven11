@@ -18,6 +18,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getFunctions, httpsCallable, connectFunctionsEmulator } from "firebase/functions";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator } from "firebase/storage";
+import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { emulatorEnabled, emulatorHost } from "../utils/emulator";
 
 // --- eleven11 config ---
@@ -81,6 +82,8 @@ if (emulatorEnabled) {
 // ---- Functions ----
 const functions = getFunctions(app, "us-central1");
 if (emulatorEnabled) connectFunctionsEmulator(functions, emulatorHost, 5001);
+export const firestore = getFirestore(app);
+if (emulatorEnabled) connectFirestoreEmulator(firestore, emulatorHost, 8080);
 const storage = getStorage(app);
 if (emulatorEnabled) connectStorageEmulator(storage, emulatorHost, 9199);
 const _canPost = httpsCallable(functions, "canPost");

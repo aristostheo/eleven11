@@ -3,8 +3,8 @@
 Expo Router / React Native app with Firebase anonymous authentication, photo uploads,
 and callable Cloud Functions. Posting opens for 90 seconds at **11:11 AM and PM** in
 the device's timezone, with one post per anonymous account per local calendar day.
-The server validates submissions. The current UI contains a clock and composer;
-there is no feed or collage screen yet. See [project status and unfinished work](docs/PROJECT_STATUS.md).
+The server validates submissions. The current UI includes a clock, composer, and
+read-only daily feed. See [project status and unfinished work](docs/PROJECT_STATUS.md).
 
 Commands below start from the repository root unless stated otherwise.
 
@@ -56,13 +56,37 @@ cd functions
 npm ci
 cd ..
 firebase login
-firebase deploy --only functions,firestore:rules,storage
+firebase deploy --only functions,firestore:rules,firestore:indexes,storage
 ```
 
 Photo uploads use `/uploads/{uid}/{fileName}` and require the updated Storage
 rules. Images must be smaller than 3 MB. Posting now uses an atomic daily claim
 to reject concurrent duplicates. Keep client and backend updates together.
 No deployment is performed by local checks.
+
+## Daily wish feed
+
+The clock screen always includes **View daily wishes**. The feed reads only
+`status: "active"` posts, displays captions, optional images, and the posting
+time in the viewer's local timezone, and supports loading, empty, error,
+pull-to-refresh, and paginated states. A successful post goes directly to the
+feed.
+
+“Today” is each viewer's local calendar day. The feed queries the server
+`createdAt` timestamp from that viewer's local midnight through the next local
+midnight, so daylight-saving days can be 23 or 25 hours long. Viewers in
+different timezones can therefore see different daily sets. This is separate
+from `dayKey`, which remains the author's local calendar date and continues to
+enforce one post per anonymous account per local day.
+
+Deploy [firestore.indexes.json](firestore.indexes.json) with the Firestore
+rules. The feed requires the composite index on `status` and `createdAt`
+(descending). Rules allow reads only for active posts; client writes remain
+blocked.
+
+Changing a post to non-active removes it from future Firestore feed reads, but
+does **not** revoke an image URL that was already public and shared. Media
+revocation and moderation remain a separate milestone.
 
 In development, **Preview compose** lets you inspect the composer at any time.
 It does not bypass server posting restrictions. Release builds hide this link.

@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { DateTime } = require("../functions/node_modules/luxon");
 
 const host = process.env.EXPO_PUBLIC_FIREBASE_EMULATOR_HOST || "127.0.0.1";
 const project = "eleven11-aristos";
@@ -74,6 +75,7 @@ async function main() {
   const { initializeApp } = require("../apps/mobile/node_modules/firebase/app");
   const { getAuth, connectAuthEmulator, signInAnonymously } = require("../apps/mobile/node_modules/firebase/auth");
   const { getStorage, connectStorageEmulator, ref, uploadBytes, getDownloadURL, deleteObject } = require("../apps/mobile/node_modules/firebase/storage");
+  const { getFirestore, connectFirestoreEmulator, collection, doc, getDoc, getDocs, limit, orderBy, query, startAfter, terminate, where } = require("../apps/mobile/node_modules/firebase/firestore");
   const clientApp = initializeApp({ projectId: project, storageBucket: emulatorBucket, apiKey: "emulator" }, "storage-smoke");
   const clientAuth = getAuth(clientApp);
   connectAuthEmulator(clientAuth, `http://${host}:9099`, { disableWarnings: true });
@@ -97,7 +99,9 @@ async function main() {
     { code: "storage/unauthorized" },
   );
   await deleteObject(uploaded.ref);
-  const media = uploadUrl;
+  const feedPhotoRef = ref(clientStorage, `uploads/${second.localId}/feed-photo.png`);
+  await uploadBytes(feedPhotoRef, png, { contentType: "image/png" });
+  const media = await getDownloadURL(feedPhotoRef);
   const photoPayload = {
     tzId: "America/Toronto",
     caption: "emulator photo smoke",
@@ -109,12 +113,55 @@ async function main() {
   assert.equal(photoDuplicate.status, 409, JSON.stringify(photoDuplicate.body));
   assert.equal(photoDuplicate.body.error.status, "ALREADY_EXISTS");
 
+  const extraPostIds = [];
+  for (let index = 0; index < 5; index += 1) {
+    const identity = await newIdentity();
+    const post = await call("submitPost", identity.idToken, {
+      tzId: "America/Toronto",
+      caption: `feed pagination ${index}`,
+      media: { type: "none" },
+    });
+    assert.equal(post.status, 200, JSON.stringify(post.body));
+    extraPostIds.push(post.body.result.postId);
+  }
+
+  const { initializeApp: initializeAdminApp, getApps: getAdminApps } = require("../functions/node_modules/firebase-admin/lib/app");
+  const { getFirestore: getAdminFirestore } = require("../functions/node_modules/firebase-admin/lib/firestore");
+  if (!getAdminApps().length) initializeAdminApp({ projectId: project });
+  const adminDb = getAdminFirestore();
+  await adminDb.collection("posts").doc(extraPostIds[0]).update({ status: "hidden" });
+  const photoDoc = await adminDb.collection("posts").doc(photo.body.result.postId).get();
+  const feedStart = DateTime.fromMillis(photoDoc.data().createdAt.toMillis(), {
+    zone: "America/Toronto",
+  }).startOf("day");
+  const feedEnd = feedStart.plus({ days: 1 });
+
+  const feedDb = getFirestore(clientApp);
+  connectFirestoreEmulator(feedDb, host, 8080);
+  const feedBase = query(
+    collection(feedDb, "posts"),
+    where("status", "==", "active"),
+    where("createdAt", ">=", feedStart.toJSDate()),
+    where("createdAt", "<", feedEnd.toJSDate()),
+    orderBy("createdAt", "desc"),
+  );
+  const firstPage = await getDocs(query(feedBase, limit(3)));
+  const secondPage = await getDocs(query(feedBase, startAfter(firstPage.docs[firstPage.docs.length - 1]), limit(3)));
+  assert.equal(firstPage.docs.length, 3);
+  assert.equal(secondPage.docs.length, 3);
+  const pagedIds = [...firstPage.docs, ...secondPage.docs].map((entry) => entry.id);
+  assert(!pagedIds.includes(extraPostIds[0]), "Hidden posts must not appear in the feed");
+  assert(pagedIds.includes(photo.body.result.postId), "Photo posts must appear in the feed");
+  await assert.rejects(getDoc(doc(feedDb, "posts", extraPostIds[0])), { code: "permission-denied" });
+  await terminate(feedDb);
+
   console.log(JSON.stringify({
     clockMillis: clock.body.result.serverMillis,
     textPostId: text.body.result.postId,
     photoPostId: photo.body.result.postId,
     duplicateStatuses: [textDuplicate.status, photoDuplicate.status],
     storageRuleChecks: { ownerUpload: true, crossUserUploadRejected: true, ownerDelete: true },
+    feedChecks: { pagination: true, hiddenPostExcluded: true, hiddenPostReadRejected: true },
   }));
 }
 

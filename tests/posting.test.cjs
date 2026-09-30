@@ -31,6 +31,27 @@ test('next window uses local calendar across midnight and daylight saving change
     assert.equal(start.toFormat('HH:mm:ss'), '11:11:00');
   }
 });
+test('daily feed uses Toronto local midnight even when the evening crosses UTC midnight', () => {
+  const range = mobile.exports.localDayRange(
+    'America/Toronto',
+    DateTime.fromISO('2026-09-30T01:30:00Z').toMillis(),
+  );
+  assert.equal(range.dayKey, '2026-09-29');
+  assert.equal(DateTime.fromMillis(range.startMillis).toUTC().toISO(), '2026-09-29T04:00:00.000Z');
+  assert.equal(DateTime.fromMillis(range.endMillis).toUTC().toISO(), '2026-09-30T04:00:00.000Z');
+  assert(DateTime.fromISO('2026-09-30T03:59:59Z').toMillis() < range.endMillis);
+  assert.equal(DateTime.fromISO('2026-09-30T04:00:00Z').toMillis(), range.endMillis);
+});
+test('daily feed local range follows Toronto daylight saving boundaries', () => {
+  const range = mobile.exports.localDayRange(
+    'America/Toronto',
+    DateTime.fromISO('2026-03-08T16:00:00Z').toMillis(),
+  );
+  assert.equal(range.dayKey, '2026-03-08');
+  assert.equal(DateTime.fromMillis(range.startMillis).toUTC().toISO(), '2026-03-08T05:00:00.000Z');
+  assert.equal(DateTime.fromMillis(range.endMillis).toUTC().toISO(), '2026-03-09T04:00:00.000Z');
+  assert.equal(range.endMillis - range.startMillis, 23 * 60 * 60 * 1000);
+});
 test('reject invalid zones and phone-local or missing photo URLs', () => {
   assert.equal(timezoneSchema.safeParse('invalid-zone').success, false);
   assert.equal(timezoneSchema.safeParse('America/Toronto').success, true);
