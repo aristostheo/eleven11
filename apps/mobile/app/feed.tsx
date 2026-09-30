@@ -16,10 +16,11 @@ import { useServerClock } from "../src/utils/useServerClock";
 
 export default function DailyFeed() {
   const { serverNow } = useServerClock();
+  const tzId = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
   const now = serverNow();
-  const dateKey = now === null ? null : feedDayKey(now);
+  const dateKey = now === null ? null : feedDayKey(now, tzId);
   const [wishes, setWishes] = useState<Wish[]>([]);
-  const [cursor, setCursor] = useState<Parameters<typeof loadDailyFeed>[1]>(null);
+  const [cursor, setCursor] = useState<Parameters<typeof loadDailyFeed>[2]>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -31,7 +32,7 @@ export default function DailyFeed() {
     setRefreshing(true);
     setError(null);
     try {
-      const page = await loadDailyFeed(dateKey);
+      const page = await loadDailyFeed(dateKey, tzId);
       setWishes(page.wishes);
       setCursor(page.cursor);
       setHasMore(page.hasMore);
@@ -41,7 +42,7 @@ export default function DailyFeed() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [dateKey]);
+  }, [dateKey, tzId]);
 
   useEffect(() => {
     setLoading(true);
@@ -52,7 +53,7 @@ export default function DailyFeed() {
     if (!dateKey || !cursor || !hasMore || loadingMore) return;
     setLoadingMore(true);
     try {
-      const page = await loadDailyFeed(dateKey, cursor);
+      const page = await loadDailyFeed(dateKey, tzId, cursor);
       setWishes((current) => [...current, ...page.wishes]);
       setCursor(page.cursor);
       setHasMore(page.hasMore);
@@ -61,11 +62,11 @@ export default function DailyFeed() {
     } finally {
       setLoadingMore(false);
     }
-  }, [cursor, dateKey, hasMore, loadingMore]);
+  }, [cursor, dateKey, hasMore, loadingMore, tzId]);
 
   const subtitle = useMemo(() => dateKey
-    ? `Worldwide daily feed · ${dateKey} UTC`
-    : "Syncing with the server clock…", [dateKey]);
+    ? `Your daily feed · ${dateKey} · ${tzId}`
+    : "Syncing with the server clock…", [dateKey, tzId]);
 
   return (
     <View style={{ flex: 1, backgroundColor: "#0a0814" }}>

@@ -72,9 +72,10 @@ time in the viewer's local timezone, and supports loading, empty, error,
 pull-to-refresh, and paginated states. A successful post goes directly to the
 feed.
 
-“Today” has one global meaning: it is the **UTC calendar date of the server
-`createdAt` timestamp**. This lets every viewer see the same daily feed while
-also including active posts created before this feed existed. It is separate
+“Today” is each viewer's local calendar day. The feed queries the server
+`createdAt` timestamp from that viewer's local midnight through the next local
+midnight, so daylight-saving days can be 23 or 25 hours long. Viewers in
+different timezones can therefore see different daily sets. This is separate
 from `dayKey`, which remains the author's local calendar date and continues to
 enforce one post per anonymous account per local day.
 

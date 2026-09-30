@@ -2,7 +2,7 @@
 
 ## What exists
 
-Eleven11 is a posting prototype with a read-only global daily feed. The app
+Eleven11 is a posting prototype with a read-only daily feed. The app
 routes are the clock (`app/index.tsx`), composer (`app/compose.tsx`), and feed
 (`app/feed.tsx`). Items below distinguish the implemented v0.3 scope from
 remaining product work.
@@ -17,8 +17,9 @@ Implemented locally:
 - Read-only daily feed with loading, empty, error, pull-to-refresh, and
   pagination states. It shows active captions, photos, and viewer-local posting
   times, newest first.
-- A global feed date: the UTC day range of server `createdAt`, while
-  author-local `dayKey` remains the one-post-per-local-day key.
+- A viewer-local feed date: the range from local midnight to the next local
+  midnight of server `createdAt`. This handles 23- and 25-hour daylight-saving
+  days, while author-local `dayKey` remains the one-post-per-local-day key.
 - Firestore read policy and composite index configuration for active daily-feed
   queries. Non-active documents are denied to clients and excluded from the UI.
 - Expo SDK 57 / React Native 0.86 / Firebase JS 12 dependencies for Expo Go 57.
@@ -38,7 +39,7 @@ Implemented locally:
 | Before public launch | Media lifecycle and ownership | Upload precedes submission; a failed/expired submission can leave an orphan. Backend accepts any HTTPS image URL without checking the uploaded object's owner. | Associate uploads with the submitting user/post, clean up abandoned objects, and define post/media deletion. |
 | Next | Draft/retry experience | Caption and image exist only in component state. Image-picker exceptions have no visible recovery, and no draft restoration or upload progress exists. | Preserve drafts, show recoverable failures and upload progress, and prevent accidental loss on navigation. |
 | Next | Responsive layout/accessibility | Fixed offsets/heights and initial screen dimensions; image buttons have no explicit accessibility labels. No native visual or assistive-technology testing yet. | Check safe areas, small screens, keyboard, screen reader, large text and reduced motion on devices. |
-| Next | Feed detail and historical views | The feed is intentionally limited to the current UTC day. There is no post detail route, author history, or historical archive. | Make product decisions before adding history or profiles. |
+| Next | Feed detail and historical views | The feed is intentionally limited to the viewer's current local day. There is no post detail route, author history, or historical archive. | Make product decisions before adding history or profiles. |
 | Next | Release packaging | No EAS build profiles, app icons, native bundle identifiers, or release/deployment workflow. | Configure these when a standalone install/release is wanted; Expo Go preview does not require them. |
 
 ## Optional expansion, not implemented or yet specified
@@ -87,8 +88,12 @@ Track upstream-compatible fixes and assess runtime exposure before public releas
 - Local Firebase Emulator Suite test passed with callable-created posts: active
   posts were queried newest-first over two pages, a photo post appeared, a
   non-active post was excluded, and a direct client read of that hidden post was
-  rejected by Firestore Rules.
-- Mobile TypeScript check, Functions build/lint, and the seven existing
+  rejected by Firestore Rules. The virtual server time was set to 2026-09-30
+  01:30 UTC (Toronto evening on 2026-09-29), so the feed query used Toronto's
+  local, rather than UTC, day boundaries.
+- Feed-range regression tests cover that Toronto/UTC crossover and the
+  2026-03-08 Toronto spring-forward day, whose local range is 23 hours.
+- Mobile TypeScript check, Functions build/lint, and all nine
   regression tests passed after the feed changes. The Expo export completed for
   iOS, Android, and web.
 - A physical-device feed run still needs to be repeated after an approved

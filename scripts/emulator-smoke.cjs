@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { DateTime } = require("../functions/node_modules/luxon");
 
 const host = process.env.EXPO_PUBLIC_FIREBASE_EMULATOR_HOST || "127.0.0.1";
 const project = "eleven11-aristos";
@@ -130,18 +131,18 @@ async function main() {
   const adminDb = getAdminFirestore();
   await adminDb.collection("posts").doc(extraPostIds[0]).update({ status: "hidden" });
   const photoDoc = await adminDb.collection("posts").doc(photo.body.result.postId).get();
-  const feedStart = new Date(photoDoc.data().createdAt.toMillis());
-  const feedEnd = new Date(feedStart);
-  feedStart.setUTCHours(0, 0, 0, 0);
-  feedEnd.setUTCDate(feedEnd.getUTCDate() + 1);
+  const feedStart = DateTime.fromMillis(photoDoc.data().createdAt.toMillis(), {
+    zone: "America/Toronto",
+  }).startOf("day");
+  const feedEnd = feedStart.plus({ days: 1 });
 
   const feedDb = getFirestore(clientApp);
   connectFirestoreEmulator(feedDb, host, 8080);
   const feedBase = query(
     collection(feedDb, "posts"),
     where("status", "==", "active"),
-    where("createdAt", ">=", feedStart),
-    where("createdAt", "<", feedEnd),
+    where("createdAt", ">=", feedStart.toJSDate()),
+    where("createdAt", "<", feedEnd.toJSDate()),
     orderBy("createdAt", "desc"),
   );
   const firstPage = await getDocs(query(feedBase, limit(3)));

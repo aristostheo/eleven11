@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import { DateTime } from "luxon";
 import { firestore } from "./firebase";
+import { localDayRange } from "../utils/time";
 
 export const DAILY_FEED_PAGE_SIZE = 10;
 
@@ -22,13 +23,13 @@ export type Wish = {
   media: { type: "none" } | { type: "image"; url: string; w?: number; h?: number };
 };
 
-/** A global calendar date derived from the server clock, not an author's zone. */
-export function feedDayKey(millis: number) {
-  return DateTime.fromMillis(millis).toUTC().toISODate();
+/** Calendar day used by this viewer's feed. */
+export function feedDayKey(millis: number, tzId: string) {
+  return localDayRange(tzId, millis).dayKey;
 }
 
-function feedDayRange(dateKey: string) {
-  const start = DateTime.fromISO(dateKey, { zone: "UTC" }).startOf("day");
+function feedDayRange(dateKey: string, tzId: string) {
+  const start = DateTime.fromISO(dateKey, { zone: tzId }).startOf("day");
   return {
     start: Timestamp.fromMillis(start.toMillis()),
     end: Timestamp.fromMillis(start.plus({ days: 1 }).toMillis()),
@@ -43,9 +44,10 @@ export type DailyFeedPage = {
 
 export async function loadDailyFeed(
   dateKey: string,
+  tzId: string,
   cursor?: QueryDocumentSnapshot<DocumentData> | null,
 ): Promise<DailyFeedPage> {
-  const range = feedDayRange(dateKey);
+  const range = feedDayRange(dateKey, tzId);
   const base = query(
     collection(firestore, "posts"),
     where("status", "==", "active"),

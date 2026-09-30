@@ -19,3 +19,14 @@ export function postingWindow(now: DateTime, overrideStartMillis?: number) {
 
 export const dayKey = (tzId: string, millis?: number) =>
   DateTime.fromMillis(millis ?? Date.now(), { zone: tzId }).toISODate();
+
+/** Calendar range for a viewer's local day; DST days are not always 24 hours. */
+export function localDayRange(tzId: string, millis = Date.now()) {
+  const start = DateTime.fromMillis(millis, { zone: tzId }).startOf("day");
+  const end = start.plus({ days: 1 });
+  return {
+    dayKey: start.toISODate() ?? "",
+    startMillis: start.toMillis(),
+    endMillis: end.toMillis(),
+  };
+}
