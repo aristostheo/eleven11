@@ -1,11 +1,12 @@
-# Project status — 2026-09-29
+# Project status — 2026-10-01
 
 ## What exists
 
-Eleven11 is a posting prototype with a read-only daily feed and private wish
-journal. The app routes are the clock (`app/index.tsx`), composer
-(`app/compose.tsx`), feed (`app/feed.tsx`), and journal (`app/my-wishes.tsx`).
-Items below distinguish the implemented local v0.4 scope from remaining product work.
+Eleven11 is a posting prototype with a read-only daily feed, private wish
+journal, reactions, and local reminders. The app routes are the clock
+(`app/index.tsx`), composer (`app/compose.tsx`), feed (`app/feed.tsx`), journal
+(`app/my-wishes.tsx`), and settings (`app/settings.tsx`). Items below distinguish
+the implemented local v0.5 scope from remaining product work.
 
 Implemented locally:
 
@@ -34,14 +35,21 @@ Implemented locally:
 - Private-post Firestore and Storage protection: private documents are owner-only;
   the backend verifies the uploaded object owner/path and clears private download
   tokens before storing the post. The feed is callable-backed and omits owner UIDs.
+- One callable-backed ✨ reaction per Firebase identity on an active shared wish.
+  Its aggregate is updated transactionally; reaction identities and direct client
+  writes are blocked by Firestore Rules.
+- Device-local 11:11 reminder settings for AM, PM, or both. Permission is asked
+  only when enabling, disabled periods are cancelled, and timezone changes are
+  reconciled when the app resumes.
 
 ## Unfinished features and integration work
 
 | Priority | Area | Evidence / gap | Completion target |
 | --- | --- | --- | --- |
-| First | Firebase/device integration | v0.4 was exercised only in isolated emulators; no live deployment or device posting test was performed. | Deploy reviewed functions/rules/indexes, then verify private/shared text/photo submission on iPhone. |
+| First | Firebase/device integration | v0.5 was exercised only in isolated emulators; no live deployment or device posting test was performed. | Deploy reviewed functions/rules/indexes, then verify private/shared text/photo submission and reactions on iPhone. |
 | First | Feed moderation and media revocation | The feed hides non-active Firestore documents, but an already shared public Storage download URL remains usable. | Use revocable media delivery and moderation actions before claiming hidden media is inaccessible. |
-| Before public launch | Reactions | Only zero-valued `reacts.sparkle` and `reacts.crystal` fields are created. No UI or callable updates them. | Reaction controls, authenticated server mutation, duplicate/toggle policy and tests. |
+| Before public launch | Reaction moderation | A single sparkle toggle is implemented. There are no rate limits, abuse controls, reaction notifications, or moderation workflow. | Define abuse limits and moderation policy before public launch. |
+| Before public launch | Reminder device behavior | Unit checks cover scheduling, cancellation, denied permission, and timezone rescheduling. Native permission prompts, scheduled delivery, timezone changes, and notification taps have not been observed on a device. | Test iOS and Android devices after an app build. |
 | Before public launch | Reports and moderation | Only a report counter and a permissive signed-in `/reports` create rule exist. No report UI, validated payload, review flow or moderation actions. The feed excludes non-active Firestore documents but cannot revoke public image URLs already shared. | Define/report reasons, validate ownership/target data, rate-limit reports, moderation actions, and revocable media delivery. |
 | Before public launch | Posting identity/timezone policy | Anonymous users can reset their identity; the timezone comes from the caller. Daily claims protect one UID/date, not one person or a rolling 24 hours. | Define stable account and timezone-change rules if a stronger daily limit is required. |
 | Before public launch | Media lifecycle and ownership | The backend now verifies the uploader UID, path, image type, and size before accepting an object reference; failed or expired submissions can still leave an orphan if cleanup cannot complete. | Add scheduled orphan cleanup and define post/media deletion. |
@@ -52,9 +60,9 @@ Implemented locally:
 
 ## Optional expansion, not implemented or yet specified
 
-Profiles, permanent sign-in/account recovery, notifications and 11:11 reminders,
-friends/following, sharing and post editing are absent. Journal access is tied to
-the current Firebase identity, and account recovery is not implemented.
+Profiles, permanent sign-in/account recovery, remote push notifications,
+friends/following, sharing and post editing are absent. Journal access is tied
+to the current Firebase identity, and account recovery is not implemented.
 
 ## Checks completed on 2026-09-28
 
@@ -130,3 +138,23 @@ shared. Then revisit stable identity/timezone policy and media ownership.
 - Deployment requirement: deploy the v0.4 Functions, Firestore rules and the
   `uid, createdAt` history index, and Storage rules together. Existing posts
   without `visibility` retain shared compatibility until a reviewed migration.
+
+## v0.5 verification — reactions and local reminders
+
+- Isolated Firebase Emulator Suite run passed with two anonymous identities.
+  The first identity added then removed a sparkle; both then added one and the
+  aggregate settled at two. The feed returned only the count and the requesting
+  viewer's selected state. Direct reads of reaction documents were denied.
+- The same run rejected reaction attempts for a private wish and a hidden wish,
+  rejected missing and malformed IDs, and retained v0.4 coverage for private
+  image isolation, shared-feed anonymity, pagination, and duplicate posting.
+- Functions build/lint, mobile typecheck, and 14 regression tests passed. The
+  reminder tests cover AM/PM scheduling, cancellation, denied permission, and
+  re-scheduling from `America/Toronto` to `Asia/Kolkata` after app resume.
+- Expo export for iOS, Android, and web passed. No live Firebase resources or
+  data were deployed or changed.
+- Deployment requirement: deploy the v0.5 Functions and Firestore Rules with
+  the mobile update. No new Firestore index is required; a first v0.4-or-later
+  deployment still includes the reviewed Storage Rules and existing indexes.
+  Expo Notifications must be checked in a native app for permission, delivery,
+  timezone behavior, and notification taps.

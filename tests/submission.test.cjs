@@ -26,7 +26,11 @@ const db = {
 const originalLoad = Module._load;
 Module._load = function (name, ...args) {
   if (name === 'firebase-admin/firestore') {
-    return { getFirestore: () => db, FieldValue: { serverTimestamp: () => 'server-time' } };
+    return {
+      getFirestore: () => db,
+      FieldValue: { serverTimestamp: () => 'server-time' },
+      Timestamp: { fromMillis: (millis) => ({ toMillis: () => millis }) },
+    };
   }
   return originalLoad.call(this, name, ...args);
 };

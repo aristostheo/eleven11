@@ -89,6 +89,7 @@ const _getServerTime = httpsCallable<undefined, { serverMillis: number }>(functi
 const _getDailyWishes = httpsCallable(functions, "getDailyWishes");
 const _getMyWishes = httpsCallable(functions, "getMyWishes");
 const _getPrivateImage = httpsCallable(functions, "getPrivateImage");
+const _toggleSparkleReaction = httpsCallable(functions, "toggleSparkleReaction");
 
 // Ensure a signed-in user (silent anonymous)
 let signInPromise: Promise<User> | null = null;
@@ -153,10 +154,16 @@ export function submitPost(payload: {
   return _submitPost(payload);
 }
 
-export function getDailyWishes(payload: { tzId: string; cursor?: { createdAtMillis: number; id: string } | null }) {
+export async function getDailyWishes(payload: { tzId: string; cursor?: { createdAtMillis: number; id: string } | null }) {
+  await ensureAuth();
   return _getDailyWishes(payload);
 }
 
 export function getMyWishes(payload: { cursor?: { createdAtMillis: number; id: string } | null }) {
   return _getMyWishes(payload);
+}
+
+export async function toggleSparkleReaction(postId: string) {
+  await ensureAuth();
+  return _toggleSparkleReaction({ postId });
 }

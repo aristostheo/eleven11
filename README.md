@@ -3,8 +3,9 @@
 Expo Router / React Native app with Firebase anonymous authentication, photo uploads,
 and callable Cloud Functions. Posting opens for 90 seconds at **11:11 AM and PM** in
 the device's timezone, with one post per anonymous account per local calendar day.
-The server validates submissions. The current UI includes a clock, composer, and
-read-only daily feed. See [project status and unfinished work](docs/PROJECT_STATUS.md).
+The server validates submissions. The current UI includes a clock, composer,
+daily feed, personal journal, and local reminder settings. See [project status
+and unfinished work](docs/PROJECT_STATUS.md).
 
 Commands below start from the repository root unless stated otherwise.
 
@@ -118,6 +119,28 @@ does **not** revoke an image URL that was already public and shared. Media
 revocation and moderation remain a separate milestone. Private image delivery
 does not use those public URLs.
 
+## Reactions and local reminders
+
+Each active shared wish has one **✨** toggle per signed-in Firebase identity.
+The count and that viewer's selected state come from a callable; reaction
+documents and direct count updates are blocked by Firestore Rules. Reactions are
+available outside a posting window. Private and non-active wishes cannot be
+reacted to, and the feed never returns reaction identities.
+
+**Settings** on the clock screen lets a user enable local 11:11 AM reminders,
+PM reminders, or both. The setting stays on the device. Permission is requested
+only when turning on a reminder; a denial leaves the choice visible and explains
+how to enable notifications in iPhone Settings. Scheduled notifications follow
+the device timezone and are rebuilt when the app resumes after a timezone
+change. Disabling a period cancels its local notification. These are local Expo
+notifications, not remote push notifications.
+
+Deploy the v0.5 Functions and Firestore Rules with the app update. No new
+Firestore index is required; a first v0.4-or-later deployment also needs the
+reviewed Storage Rules and existing indexes described above. A native-device
+check is still required for the permission dialog, scheduling, cancellation,
+timezone change, and notification tap behavior.
+
 In development, **Preview compose** lets you inspect the composer at any time.
 It does not bypass server posting restrictions. Release builds hide this link.
 Outside a posting window, the disabled submit button is expected.
@@ -141,11 +164,12 @@ npx expo export --platform all
 ```
 
 The regression tests cover AM/PM window boundaries, timezone/daylight-saving
-rollover, timezone validation, rejecting phone-local image URLs, and callable
-validation/concurrent submissions using an in-memory transaction adapter. Bundling
-and these checks do not verify live Firebase credentials, deployment, or native
-interactions. Confirm sign-in, photo selection/upload, posting, and duplicate
-rejection on a device against your configured backend.
+rollover, timezone validation, rejecting phone-local image URLs, callable
+validation/concurrent submissions, sparkle toggling, and local reminder
+scheduling. Bundling and these checks do not verify live Firebase credentials,
+deployment, or native interactions. Confirm sign-in, photo selection/upload,
+posting, duplicate rejection, notification permission, and scheduled reminders
+on a device against your configured backend.
 
 ## Known scope limits
 

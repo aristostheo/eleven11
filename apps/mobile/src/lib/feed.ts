@@ -15,6 +15,7 @@ export type Wish = {
   caption: string;
   createdAtMillis: number;
   media: WishMedia;
+  reactions: { sparkle: number; viewerReacted: boolean };
 };
 
 /** Calendar day used by this viewer's feed. */
