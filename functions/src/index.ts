@@ -36,6 +36,7 @@ const cursorSchema = z.object({
 const dailyFeedSchema = z.object({ tzId: timezoneSchema, cursor: cursorSchema });
 const historySchema = z.object({ cursor: cursorSchema });
 const privateImageSchema = z.object({ storagePath: z.string().regex(/^uploads\/[^/]+\/[^/]+$/) });
+const reactionSchema = z.object({ postId: z.string().min(1).max(150).regex(/^[^/]+$/) });
 
 type ImageMedia = { type: "image"; storagePath: string; w?: number; h?: number };
 type ObjectMetadata = {
@@ -83,7 +84,10 @@ function mediaForDocument(data: FirebaseFirestore.DocumentData) {
   };
 }
 
-function visibleFeedWish(document: FirebaseFirestore.QueryDocumentSnapshot) {
+function visibleFeedWish(
+  document: FirebaseFirestore.QueryDocumentSnapshot,
+  viewerReacted = false
+) {
   const data = document.data();
   if (data.visibility === "private") return null;
   const createdAt = data.createdAt as FirebaseFirestore.Timestamp | undefined;
@@ -94,6 +98,10 @@ function visibleFeedWish(document: FirebaseFirestore.QueryDocumentSnapshot) {
     caption: data.caption as string,
     createdAtMillis: createdAt.toMillis(),
     media: mediaForDocument(data),
+    reactions: {
+      sparkle: Math.max(0, Number(data.reacts?.sparkle ?? 0)),
+      viewerReacted,
+    },
   };
 }
 
@@ -203,7 +211,7 @@ export const submitPost = functions.https.onCall(async (data, context) => {
     transaction.create(claim, { postId: ref.id });
     transaction.create(ref, {
       uid,
-      createdAt: FieldValue.serverTimestamp(),
+      createdAt: Timestamp.fromMillis(serverMillis()),
       dayKey,
       caption,
       visibility,
@@ -217,7 +225,7 @@ export const submitPost = functions.https.onCall(async (data, context) => {
 });
 
 // ——— read-only shared daily feed —————————————————————————
-export const getDailyWishes = functions.https.onCall(async (data) => {
+export const getDailyWishes = functions.https.onCall(async (data, context) => {
   const parsed = dailyFeedSchema.safeParse(data);
   if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
   const now = DateTime.fromMillis(serverMillis()).setZone(parsed.data.tzId);
@@ -235,16 +243,51 @@ export const getDailyWishes = functions.https.onCall(async (data) => {
     query = query.startAfter(cursor);
   }
   const snapshot = await query.limit(FETCH_SIZE).get();
-  const visible = snapshot.docs.map((document) => ({ document, wish: visibleFeedWish(document) }))
-    .filter((entry) => entry.wish !== null);
+  const visible = snapshot.docs.filter((document) => document.get("visibility") !== "private");
   const selected = visible.slice(0, PAGE_SIZE);
-  const wishes = selected.map((entry) => entry.wish);
-  const scanned = selected[selected.length - 1]?.document;
+  const viewerUid = context.auth?.uid;
+  const reactionSnapshots = viewerUid
+    ? await db.getAll(...selected.map((document) =>
+      document.ref.collection("reactions").doc(viewerUid)))
+    : [];
+  const wishes = selected.map((document, index) =>
+    visibleFeedWish(document, reactionSnapshots[index]?.exists ?? false));
+  const scanned = selected[selected.length - 1];
   return {
     wishes,
     cursor: wishes.length === PAGE_SIZE && scanned ? cursorFor(scanned) : null,
     hasMore: visible.length > PAGE_SIZE || snapshot.docs.length === FETCH_SIZE,
   };
+});
+
+// ——— one anonymous sparkle reaction per shared active post —————————————
+export const toggleSparkleReaction = functions.https.onCall(async (data, context) => {
+  const uid = requireAuth(context);
+  const parsed = reactionSchema.safeParse(data);
+  if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
+  const post = db.collection("posts").doc(parsed.data.postId);
+  const reaction = post.collection("reactions").doc(uid);
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(post);
+    if (!snapshot.exists) throw new functions.https.HttpsError("not-found", "Wish not found");
+    const wish = snapshot.data();
+    if (!wish) throw new functions.https.HttpsError("not-found", "Wish not found");
+    if (wish.status !== "active" || wish.visibility === "private") {
+      throw new functions.https.HttpsError("permission-denied", "Wish is not reactable");
+    }
+    const prior = await transaction.get(reaction);
+    const current = Math.max(0, Number(wish.reacts?.sparkle ?? 0));
+    if (prior.exists) {
+      transaction.delete(reaction);
+      const sparkle = Math.max(0, current - 1);
+      transaction.update(post, { "reacts.sparkle": sparkle });
+      return { postId: post.id, reacted: false, count: sparkle };
+    }
+    transaction.create(reaction, { createdAt: FieldValue.serverTimestamp() });
+    const sparkle = current + 1;
+    transaction.update(post, { "reacts.sparkle": sparkle });
+    return { postId: post.id, reacted: true, count: sparkle };
+  });
 });
 
 // ——— authenticated personal journal ——————————————————————

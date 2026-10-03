@@ -86,6 +86,22 @@ async function main() {
   });
   assert.equal(sharedPost.status, 200, JSON.stringify(sharedPost.body));
 
+  // Reactions are callable-only, independent of the posting window. A viewer
+  // can toggle exactly one sparkle, and both identities update the count safely.
+  const firstReaction = await call("toggleSparkleReaction", first.token, { postId: sharedPost.body.result.postId });
+  assert.equal(firstReaction.status, 200, JSON.stringify(firstReaction.body));
+  assert.deepEqual(firstReaction.body.result, { postId: sharedPost.body.result.postId, reacted: true, count: 1 });
+  const firstRemoval = await call("toggleSparkleReaction", first.token, { postId: sharedPost.body.result.postId });
+  assert.equal(firstRemoval.status, 200, JSON.stringify(firstRemoval.body));
+  assert.equal(firstRemoval.body.result.reacted, false);
+  const [firstAgain, secondReaction] = await Promise.all([
+    call("toggleSparkleReaction", first.token, { postId: sharedPost.body.result.postId }),
+    call("toggleSparkleReaction", second.token, { postId: sharedPost.body.result.postId }),
+  ]);
+  assert.equal(firstAgain.status, 200, JSON.stringify(firstAgain.body));
+  assert.equal(secondReaction.status, 200, JSON.stringify(secondReaction.body));
+  assert.deepEqual([firstAgain.body.result.count, secondReaction.body.result.count].sort(), [1, 2]);
+
   // Owner can read private data; another identity cannot read its document,
   // get an image URL, or retrieve private image bytes through the callable.
   await getDoc(doc(first.firestore, "posts", privatePost.body.result.postId));
@@ -97,6 +113,10 @@ async function main() {
   assert.equal(otherImage.status, 403, JSON.stringify(otherImage.body));
   await assert.rejects(getDownloadURL(ref(second.storage, privatePath)), { code: "storage/unauthorized" });
   assert((await getDownloadURL(ref(second.storage, sharedPath))).includes("shared.png"));
+  await assert.rejects(
+    getDoc(doc(first.firestore, "posts", sharedPost.body.result.postId, "reactions", first.user.uid)),
+    { code: "permission-denied" }
+  );
 
   const { initializeApp: initializeAdminApp, getApps } = require("../functions/node_modules/firebase-admin/lib/app");
   const { getFirestore: getAdminFirestore, Timestamp } = require("../functions/node_modules/firebase-admin/lib/firestore");
@@ -113,6 +133,18 @@ async function main() {
       caption: `shared page ${index}`, visibility: "shared", media: { type: "none" }, status: "active",
     });
   }
+  await adminDb.collection("posts").doc("hidden-wish").set({
+    uid: "hidden-owner", createdAt, dayKey: "seed", caption: "hidden", visibility: "shared",
+    media: { type: "none" }, status: "hidden", reacts: { sparkle: 0 },
+  });
+  const privateReaction = await call("toggleSparkleReaction", second.token, { postId: privatePost.body.result.postId });
+  assert.equal(privateReaction.status, 403, JSON.stringify(privateReaction.body));
+  const hiddenReaction = await call("toggleSparkleReaction", second.token, { postId: "hidden-wish" });
+  assert.equal(hiddenReaction.status, 403, JSON.stringify(hiddenReaction.body));
+  const missingReaction = await call("toggleSparkleReaction", second.token, { postId: "missing-wish" });
+  assert.equal(missingReaction.status, 404, JSON.stringify(missingReaction.body));
+  const invalidReaction = await call("toggleSparkleReaction", second.token, { postId: "bad/id" });
+  assert.equal(invalidReaction.status, 400, JSON.stringify(invalidReaction.body));
 
   const history = await call("getMyWishes", first.token, {});
   assert.equal(history.status, 200, JSON.stringify(history.body));
@@ -122,16 +154,18 @@ async function main() {
   assert.equal(otherHistory.status, 200, JSON.stringify(otherHistory.body));
   assert.equal(otherHistory.body.result.wishes.length, 1);
 
-  const firstFeed = await call("getDailyWishes", null, { tzId: "America/Toronto" });
+  const firstFeed = await call("getDailyWishes", first.token, { tzId: "America/Toronto" });
   assert.equal(firstFeed.status, 200, JSON.stringify(firstFeed.body));
   assert.equal(firstFeed.body.result.wishes.length, 10);
-  const secondFeed = await call("getDailyWishes", null, { tzId: "America/Toronto", cursor: firstFeed.body.result.cursor });
+  const secondFeed = await call("getDailyWishes", first.token, { tzId: "America/Toronto", cursor: firstFeed.body.result.cursor });
   assert.equal(secondFeed.status, 200, JSON.stringify(secondFeed.body));
   assert(secondFeed.body.result.wishes.length >= 1);
   const feedWishes = [...firstFeed.body.result.wishes, ...secondFeed.body.result.wishes];
   assert(feedWishes.some((wish) => wish.id === sharedPost.body.result.postId));
   assert(!feedWishes.some((wish) => wish.id === privatePost.body.result.postId));
   assert(feedWishes.every((wish) => !("uid" in wish)));
+  const sharedWish = feedWishes.find((wish) => wish.id === sharedPost.body.result.postId);
+  assert.deepEqual(sharedWish.reactions, { sparkle: 2, viewerReacted: true });
 
   const temporaryPath = `uploads/${first.user.uid}/temporary.png`;
   await uploadBytes(ref(first.storage, temporaryPath), png, {
@@ -145,6 +179,7 @@ async function main() {
     privacy: { ownerPrivateRead: true, otherPrivateRejected: true, noPrivateTokenUrl: true },
     feed: { sharedAnonymous: true, privateExcluded: true, pagination: true },
     history: { ownerOlderWish: true, otherIsolated: true },
+    reactions: { repeatToggle: true, consistentCount: true, privateAndHiddenRejected: true },
     duplicateAcrossVisibility: duplicateAcrossVisibility.status,
   }));
 }

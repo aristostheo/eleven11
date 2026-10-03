@@ -12,7 +12,7 @@ import { router } from "expo-router";
 import { DateTime } from "luxon";
 import { LinearGradient } from "expo-linear-gradient";
 import { feedDayKey, loadDailyFeed, type FeedCursor, type Wish, type WishMedia } from "../src/lib/feed";
-import { getSharedPhotoUrl } from "../src/lib/firebase";
+import { getSharedPhotoUrl, toggleSparkleReaction } from "../src/lib/firebase";
 import { useServerClock } from "../src/utils/useServerClock";
 
 export default function DailyFeed() {
@@ -26,6 +26,7 @@ export default function DailyFeed() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [reactingPostId, setReactingPostId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -69,6 +70,23 @@ export default function DailyFeed() {
     ? `Your daily feed · ${dateKey} · ${tzId}`
     : "Syncing with the server clock…", [dateKey, tzId]);
 
+  const toggleReaction = useCallback(async (postId: string) => {
+    if (reactingPostId) return;
+    setReactingPostId(postId);
+    try {
+      const { data } = await toggleSparkleReaction(postId) as {
+        data: { postId: string; reacted: boolean; count: number };
+      };
+      setWishes((current) => current.map((wish) => wish.id === data.postId
+        ? { ...wish, reactions: { sparkle: data.count, viewerReacted: data.reacted } }
+        : wish));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn’t update your reaction.");
+    } finally {
+      setReactingPostId(null);
+    }
+  }, [reactingPostId]);
+
   return (
     <View style={{ flex: 1, backgroundColor: "#0a0814" }}>
       <LinearGradient
@@ -94,7 +112,7 @@ export default function DailyFeed() {
             <Text style={{ color: "rgba(255,255,255,0.68)" }}>{subtitle}</Text>
           </View>
         }
-        renderItem={({ item }) => <WishCard wish={item} />}
+        renderItem={({ item }) => <WishCard wish={item} reacting={reactingPostId === item.id} onToggleReaction={toggleReaction} />}
         ListEmptyComponent={
           loading ? (
             <View style={{ padding: 36, alignItems: "center", gap: 12 }}>
@@ -128,7 +146,15 @@ export default function DailyFeed() {
   );
 }
 
-function WishCard({ wish }: { wish: Wish }) {
+function WishCard({
+  wish,
+  reacting,
+  onToggleReaction,
+}: {
+  wish: Wish;
+  reacting: boolean;
+  onToggleReaction: (postId: string) => void;
+}) {
   const postedAt = wish.createdAtMillis
     ? DateTime.fromMillis(wish.createdAtMillis).toLocal().toFormat("h:mm a")
     : "Just now";
@@ -137,6 +163,26 @@ function WishCard({ wish }: { wish: Wish }) {
       <Text style={{ color: "white", fontSize: 17, lineHeight: 24 }}>{wish.caption}</Text>
       {wish.media.type === "image" ? <SharedWishImage media={wish.media} /> : null}
       <Text style={{ color: "rgba(255,255,255,0.58)", fontSize: 13 }}>Posted {postedAt}</Text>
+      <Pressable
+        onPress={() => void onToggleReaction(wish.id)}
+        disabled={reacting}
+        accessibilityRole="button"
+        accessibilityLabel={wish.reactions.viewerReacted ? "Remove sparkle reaction" : "Add sparkle reaction"}
+        style={{
+          alignSelf: "flex-start",
+          flexDirection: "row",
+          gap: 7,
+          alignItems: "center",
+          borderRadius: 14,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          backgroundColor: wish.reactions.viewerReacted ? "rgba(255,224,130,0.25)" : "rgba(255,255,255,0.1)",
+          opacity: reacting ? 0.6 : 1,
+        }}
+      >
+        <Text style={{ fontSize: 17 }}>✨</Text>
+        <Text style={{ color: "white", fontWeight: "700" }}>{wish.reactions.sparkle}</Text>
+      </Pressable>
     </View>
   );
 }
