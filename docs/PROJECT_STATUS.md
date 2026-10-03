@@ -153,6 +153,12 @@ shared. Then revisit stable identity/timezone policy and media ownership.
   re-scheduling from `America/Toronto` to `Asia/Kolkata` after app resume.
 - Expo export for iOS, Android, and web passed. No live Firebase resources or
   data were deployed or changed.
+- **User-operated iPhone test, 2026-10-03:** against the local emulator and
+  Expo Go development bundle, the user reported that reactions and reminders
+  worked. This is a phone observation, separate from the automated checks
+  above. The user did not separately report the exact reaction counts, iOS
+  permission choice, notification delivery/tap result, or post-disable
+  cancellation result, so those specific device behaviors remain unverified.
 - Deployment requirement: deploy the v0.5 Functions and Firestore Rules with
   the mobile update. No new Firestore index is required; a first v0.4-or-later
   deployment still includes the reviewed Storage Rules and existing indexes.
