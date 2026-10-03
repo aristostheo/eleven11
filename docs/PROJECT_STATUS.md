@@ -51,7 +51,9 @@ Implemented locally:
   client reads. Shared images are served to the app only by an authenticated
   callable; hiding marks the object hidden, clears its download token, and
   blocks future Storage-rule reads. My wishes retains an owner-facing hidden
-  journal entry without the shared image.
+  journal entry without the shared image. If the Storage metadata update fails,
+  the post stays hidden and its report is retained as a moderator-only image
+  repair item rather than claiming revocation succeeded.
 
 ## Unfinished features and integration work
 
@@ -184,6 +186,11 @@ Track upstream-compatible fixes and assess runtime exposure before public releas
   denied a fresh Storage download URL request under the deployed Storage Rule.
   The owner history callable still returned the hidden journal entry with
   `status: "hidden"`.
+- A focused follow-up emulator run verified that an empty moderator queue
+  returns an empty list. It then forced a real missing-object metadata failure:
+  the post remained hidden from feed and callable access, the report appeared
+  as an image-repair item, and retrying after its object path was restored
+  completed Storage revocation and returned the queue to its empty state.
 - Functions build/lint, mobile TypeScript typecheck, and all 14 existing
   regression tests passed. Expo export completed for iOS, Android, and web.
 - Deployment requirement: deploy the v0.6 Functions, Firestore Rules, and

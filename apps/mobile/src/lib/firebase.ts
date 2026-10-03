@@ -191,6 +191,7 @@ export type ModerationReport = {
   createdAtMillis: number;
   postStatus: "active" | "hidden" | "missing";
   hasImage: boolean;
+  needsImageRepair: boolean;
 };
 
 export async function getModerationReports(): Promise<ModerationReport[]> {
@@ -198,8 +199,11 @@ export async function getModerationReports(): Promise<ModerationReport[]> {
   return data.reports;
 }
 
-export function decideModerationReport(reportId: string, action: "dismiss" | "hide") {
-  return _decideModerationReport({ reportId, action });
+export async function decideModerationReport(reportId: string, action: "dismiss" | "hide") {
+  const { data } = await _decideModerationReport({ reportId, action }) as {
+    data: { reportId: string; action: "dismiss" | "hide"; mediaRevocation: "complete" | "failed" | "not-applicable" };
+  };
+  return data;
 }
 
 export async function isModerator(): Promise<boolean> {

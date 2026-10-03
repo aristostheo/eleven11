@@ -140,6 +140,10 @@ async function main() {
     });
   }
 
+  const emptyReview = await call("getModerationReports", moderatorToken, {});
+  assert.equal(emptyReview.status, 200, JSON.stringify(emptyReview.body));
+  assert.deepEqual(emptyReview.body.result.reports, []);
+
   const unauthenticatedReport = await call("reportWish", null, { postId: sharedPost.body.result.postId, reason: "spam" });
   assert.equal(unauthenticatedReport.status, 401, JSON.stringify(unauthenticatedReport.body));
   const privateReport = await call("reportWish", second.token, { postId: privatePost.body.result.postId, reason: "spam" });
@@ -172,15 +176,33 @@ async function main() {
   assert.equal(nonAdminDecision.status, 403, JSON.stringify(nonAdminDecision.body));
   const imageAfterDismissal = await call("getSharedImage", first.token, { postId: sharedPost.body.result.postId });
   assert.equal(imageAfterDismissal.status, 200, JSON.stringify(imageAfterDismissal.body));
-  const hidden = await call("decideModerationReport", moderatorToken, {
+  // A bad path makes the actual Storage metadata update fail after the
+  // Firestore hide. The report must remain admin-visible for a later repair.
+  await adminDb.collection("posts").doc(sharedPost.body.result.postId).update({ "media.storagePath": `${sharedPath}.missing` });
+  const failedHide = await call("decideModerationReport", moderatorToken, {
     reportId: review.body.result.reports.find((report) => report.reason === "abuse").id, action: "hide",
   });
-  assert.equal(hidden.status, 200, JSON.stringify(hidden.body));
+  assert.equal(failedHide.status, 200, JSON.stringify(failedHide.body));
+  assert.equal(failedHide.body.result.mediaRevocation, "failed");
   const hiddenSharedImage = await call("getSharedImage", first.token, { postId: sharedPost.body.result.postId });
   assert.equal(hiddenSharedImage.status, 403, JSON.stringify(hiddenSharedImage.body));
-  await assert.rejects(getDownloadURL(ref(first.storage, sharedPath)), { code: "storage/unauthorized" });
+  assert((await getDownloadURL(ref(first.storage, sharedPath))).includes("shared.png"));
   await assert.rejects(getDoc(doc(first.firestore, "posts", sharedPost.body.result.postId)), { code: "permission-denied" });
   await assert.rejects(getDoc(doc(second.firestore, "posts", sharedPost.body.result.postId)), { code: "permission-denied" });
+  const repairReview = await call("getModerationReports", moderatorToken, {});
+  assert.equal(repairReview.status, 200, JSON.stringify(repairReview.body));
+  assert.equal(repairReview.body.result.reports.length, 1);
+  assert.equal(repairReview.body.result.reports[0].needsImageRepair, true);
+  await adminDb.collection("posts").doc(sharedPost.body.result.postId).update({ "media.storagePath": sharedPath });
+  const repairedHide = await call("decideModerationReport", moderatorToken, {
+    reportId: repairReview.body.result.reports[0].id, action: "hide",
+  });
+  assert.equal(repairedHide.status, 200, JSON.stringify(repairedHide.body));
+  assert.equal(repairedHide.body.result.mediaRevocation, "complete");
+  await assert.rejects(getDownloadURL(ref(first.storage, sharedPath)), { code: "storage/unauthorized" });
+  const emptyAfterRepair = await call("getModerationReports", moderatorToken, {});
+  assert.equal(emptyAfterRepair.status, 200, JSON.stringify(emptyAfterRepair.body));
+  assert.deepEqual(emptyAfterRepair.body.result.reports, []);
 
   for (let index = 0; index < 4; index += 1) {
     const rateReport = await call("reportWish", first.token, { postId: `shared-page-${index}`, reason: "other" });

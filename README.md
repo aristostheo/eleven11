@@ -136,6 +136,10 @@ does not return shared download-token URLs. It fetches an active shared image
 through an authenticated callable; hiding marks the object `hidden`, clears its
 download token, and the Storage Rule denies new reads. My wishes keeps the
 owner's caption and marks the wish hidden, but does not serve its shared image.
+If that Storage update fails, the wish still stays hidden from the feed and
+callable. The report remains in the moderator queue as **Retry image
+revocation** and the UI explicitly says that image access was not fully revoked
+until a retry succeeds.
 
 This cannot recall an image that someone already downloaded, copied, or
 screenshotted. Legacy posts with an old `media.url` can likewise retain an

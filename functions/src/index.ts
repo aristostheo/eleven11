@@ -372,10 +372,11 @@ export const reportWish = functions.https.onCall(async (data, context) => {
 export const getModerationReports = functions.https.onCall(async (_data, context) => {
   requireModerator(context);
   const reports = await db.collection("reports")
-    .where("status", "==", "pending")
+    .where("status", "in", ["pending", "repair-needed"])
     .orderBy("createdAt", "desc")
     .limit(50)
     .get();
+  if (reports.empty) return { reports: [] };
   const posts = await db.getAll(...reports.docs.map((report) =>
     db.collection("posts").doc(report.get("postId"))));
   return {
@@ -392,6 +393,7 @@ export const getModerationReports = functions.https.onCall(async (_data, context
         createdAtMillis: createdAt?.toMillis() ?? 0,
         postStatus: post?.exists ? (post.get("status") as string) : "missing",
         hasImage: post?.get("media")?.type === "image",
+        needsImageRepair: data.status === "repair-needed",
       };
     }),
   };
@@ -403,15 +405,17 @@ export const decideModerationReport = functions.https.onCall(async (data, contex
   if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
   const report = db.collection("reports").doc(parsed.data.reportId);
   let hiddenStoragePath: string | null = null;
+  let imageNeedsRepair = false;
   await db.runTransaction(async (transaction) => {
     const reportSnapshot = await transaction.get(report);
     if (!reportSnapshot.exists) throw new functions.https.HttpsError("not-found", "Report not found");
     const reportData = reportSnapshot.data();
-    if (!reportData || reportData.status !== "pending") {
+    const retryingImageRepair = reportData?.status === "repair-needed" && parsed.data.action === "hide";
+    if (!reportData || (reportData.status !== "pending" && !retryingImageRepair)) {
       throw new functions.https.HttpsError("failed-precondition", "Report was already decided");
     }
     const now = Timestamp.fromMillis(serverMillis());
-    const decision = {
+    const decision = retryingImageRepair ? reportData.decision : {
       action: parsed.data.action,
       moderatorUid,
       decidedAt: now,
@@ -424,17 +428,55 @@ export const decideModerationReport = functions.https.onCall(async (data, contex
     const postSnapshot = await transaction.get(post);
     if (!postSnapshot.exists) throw new functions.https.HttpsError("not-found", "Wish not found");
     const wish = postSnapshot.data();
-    if (!wish || wish.status !== "active" || wish.visibility === "private") {
+    const canHide = retryingImageRepair
+      ? wish?.status === "hidden" && wish.visibility !== "private"
+      : wish?.status === "active" && wish.visibility !== "private";
+    if (!wish || !canHide) {
       throw new functions.https.HttpsError("failed-precondition", "Wish cannot be hidden");
     }
     hiddenStoragePath = wish.media?.type === "image" ? wish.media.storagePath as string : null;
-    transaction.update(post, { status: "hidden", moderation: decision });
-    transaction.update(report, { status: "resolved", decision });
+    imageNeedsRepair = Boolean(hiddenStoragePath);
+    if (!retryingImageRepair) {
+      // Hide in Firestore first so feed and callable access stop immediately,
+      // even when the separate Storage metadata operation fails.
+      transaction.update(post, { status: "hidden", moderation: decision });
+    }
+    transaction.update(report, imageNeedsRepair ? {
+      status: "repair-needed",
+      decision,
+      mediaRevocation: { status: "pending", attemptedAt: now, attemptedBy: moderatorUid },
+    } : { status: "resolved", decision });
   });
   if (parsed.data.action === "hide" && hiddenStoragePath) {
-    await hideSharedImage(hiddenStoragePath);
+    try {
+      await hideSharedImage(hiddenStoragePath);
+      await report.update({
+        status: "resolved",
+        mediaRevocation: {
+          status: "complete",
+          completedAt: Timestamp.fromMillis(serverMillis()),
+          completedBy: moderatorUid,
+        },
+      });
+    } catch {
+      // The post stays hidden, but keep an admin-visible repair item instead
+      // of claiming that a Storage URL/token was revoked successfully.
+      await report.update({
+        status: "repair-needed",
+        mediaRevocation: {
+          status: "failed",
+          attemptedAt: Timestamp.fromMillis(serverMillis()),
+          attemptedBy: moderatorUid,
+        },
+      });
+      return { reportId: report.id, action: parsed.data.action, mediaRevocation: "failed" };
+    }
   }
-  return { reportId: report.id, action: parsed.data.action };
+  return {
+    reportId: report.id,
+    action: parsed.data.action,
+    mediaRevocation: imageNeedsRepair ? "complete" : "not-applicable",
+  };
 });
 
 // ——— authenticated bytes for an active shared feed image —————————
