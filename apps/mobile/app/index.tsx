@@ -16,6 +16,7 @@ import Svg, { Circle } from "react-native-svg";
 import { postingWindow, WINDOW_SECONDS } from "../src/utils/time";
 import { useServerClock } from "../src/utils/useServerClock";
 import { emulatorWindowStartMillis } from "../src/utils/emulator";
+import { initializePostingProfile } from "../src/lib/firebase";
 
 type GateState = "checking" | "locked" | "open";
 const { width } = Dimensions.get("window");
@@ -26,7 +27,8 @@ const CIRC = 2 * Math.PI * R;
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 export default function Gate() {
-  const tzId = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  const [tzId, setTzId] = useState(deviceTimezone);
   const { serverNow } = useServerClock();
   const [state, setState] = useState<GateState>("checking");
   const [countdownStr, setCountdownStr] = useState("—");
@@ -34,6 +36,14 @@ export default function Gate() {
 
   const progress = useRef(new Animated.Value(0)).current;
   const glow = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    let active = true;
+    void initializePostingProfile(deviceTimezone)
+      .then((profile) => { if (active) setTzId(profile.timezone); })
+      .catch((error) => console.warn("Could not load posting timezone:", error));
+    return () => { active = false; };
+  }, [deviceTimezone]);
 
   const stars = useMemo(() => {
     const count = 60;
@@ -221,6 +231,9 @@ export default function Gate() {
             </Text>
             <Text style={{ color: "rgba(255,255,255,0.75)", marginTop: 4 }}>
               {nowStr}
+            </Text>
+            <Text style={{ color: "rgba(255,255,255,0.55)", marginTop: 2, fontSize: 12 }}>
+              {tzId}
             </Text>
           </Animated.View>
         </View>

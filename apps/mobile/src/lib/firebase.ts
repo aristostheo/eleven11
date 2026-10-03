@@ -11,6 +11,11 @@ import {
   browserLocalPersistence,
   setPersistence,
   signInAnonymously,
+  signInWithEmailAndPassword,
+  signOut,
+  linkWithCredential,
+  EmailAuthProvider,
+  sendPasswordResetEmail,
   connectAuthEmulator,
   type User,
   type Persistence,
@@ -94,6 +99,10 @@ const _getSharedImage = httpsCallable(functions, "getSharedImage");
 const _reportWish = httpsCallable(functions, "reportWish");
 const _getModerationReports = httpsCallable(functions, "getModerationReports");
 const _decideModerationReport = httpsCallable(functions, "decideModerationReport");
+const _initializePostingProfile = httpsCallable(functions, "initializePostingProfile");
+const _getPostingProfile = httpsCallable(functions, "getPostingProfile");
+const _updatePostingTimezone = httpsCallable(functions, "updatePostingTimezone");
+const _getIdentityStatus = httpsCallable(functions, "getIdentityStatus");
 
 // Ensure a signed-in user (silent anonymous)
 let signInPromise: Promise<User> | null = null;
@@ -146,12 +155,75 @@ export async function getServerTime(): Promise<number> {
   return data.serverMillis;
 }
 
+export type PostingProfile = {
+  timezone: string;
+  nextTimezoneChangeMillis: number;
+  postTimezoneLockUntilMillis: number | null;
+};
+
+export async function initializePostingProfile(deviceTimezone: string): Promise<PostingProfile> {
+  await ensureAuth();
+  const { data } = await _initializePostingProfile({ deviceTimezone }) as { data: PostingProfile };
+  return data;
+}
+
+export async function getPostingProfile(): Promise<PostingProfile> {
+  await ensureAuth();
+  const { data } = await _getPostingProfile({}) as { data: PostingProfile };
+  return data;
+}
+
+export async function updatePostingTimezone(timezone: string): Promise<PostingProfile> {
+  await ensureAuth();
+  const { data } = await _updatePostingTimezone({ timezone }) as { data: PostingProfile };
+  return data;
+}
+
+export type IdentityStatus = { uid: string; isAnonymous: boolean; email: string | null; hasWishes: boolean };
+
+export async function getIdentityStatus(): Promise<IdentityStatus> {
+  const user = await ensureAuth();
+  const { data } = await _getIdentityStatus({}) as { data: { hasWishes: boolean } };
+  return { uid: user.uid, isAnonymous: user.isAnonymous, email: user.email, hasWishes: data.hasWishes };
+}
+
+/** Links email/password credentials to the existing anonymous Firebase UID. */
+export async function saveAnonymousWishes(email: string, password: string): Promise<User> {
+  const user = await ensureAuth();
+  if (!user.isAnonymous) throw new Error("This identity is already saved. Sign out before using another account.");
+  const { user: linked } = await linkWithCredential(user, EmailAuthProvider.credential(email.trim(), password));
+  await linked.getIdToken(true);
+  return linked;
+}
+
+/** Refuses to replace an anonymous identity that already owns wishes. */
+export async function signInExistingAccount(email: string, password: string): Promise<{ blocked: boolean; user?: User }> {
+  const current = await ensureAuth();
+  if (!current.isAnonymous) throw new Error("Sign out before signing into another account.");
+  const { data } = await _getIdentityStatus({}) as { data: { hasWishes: boolean } };
+  if (data.hasWishes) return { blocked: true };
+  await signOut(auth);
+  const { user } = await signInWithEmailAndPassword(auth, email.trim(), password);
+  return { blocked: false, user };
+}
+
+export async function sendAccountRecovery(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email.trim());
+}
+
+/** Explicitly leaves the current saved account and starts a new anonymous identity. */
+export async function signOutToAnonymous(): Promise<User> {
+  await signOut(auth);
+  const { user } = await signInAnonymously(auth);
+  return user;
+}
+
 // Callable wrappers
-export function canPost(payload: { tzId: string; clientNow: number }) {
-  return _canPost(payload);
+export async function canPost() {
+  await ensureAuth();
+  return _canPost({});
 }
 export function submitPost(payload: {
-  tzId: string;
   caption: string;
   visibility: "private" | "shared";
   media: { type: "image" | "none"; storagePath?: string; w?: number; h?: number };

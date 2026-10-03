@@ -1,10 +1,11 @@
 # 11:11 — Time-Gated Wishes
 
-Expo Router / React Native app with Firebase anonymous authentication, photo uploads,
-and callable Cloud Functions. Posting opens for 90 seconds at **11:11 AM and PM** in
-the device's timezone, with one post per anonymous account per local calendar day.
+Expo Router / React Native app with Firebase anonymous authentication and optional
+email/password recovery, photo uploads, and callable Cloud Functions. Posting opens
+for 90 seconds at **11:11 AM and PM** in the author's server-saved timezone, with
+one post per Firebase identity per local calendar day.
 The server validates submissions. The current UI includes a clock, composer,
-daily feed, personal journal, and local reminder settings. See [project status
+daily feed, personal journal, account recovery, and local reminder settings. See [project status
 and unfinished work](docs/PROJECT_STATUS.md).
 
 Commands below start from the repository root unless stated otherwise.
@@ -46,9 +47,11 @@ The client currently connects to the live `eleven11-aristos` Firebase project
 using `apps/mobile/src/lib/firebase.ts`. Starting local emulators does **not**
 automatically switch the app to them.
 
-In the Firebase console, verify Anonymous Authentication, Firestore, and Storage
-are enabled, and verify the web app config (especially `storageBucket`) matches
-this client. Cloud Functions deployment requires billing to be configured.
+In the Firebase console, verify Anonymous Authentication, **Email/Password**
+Authentication, Firestore, and Storage are enabled, and verify the web app config
+(especially `storageBucket`) matches this client. Configure Firebase Auth's password
+reset email template and its approved continue/action URL for the app you ship.
+Cloud Functions deployment requires billing to be configured.
 
 After reviewing the local changes, deploy the updated functions and rules:
 
@@ -77,14 +80,34 @@ server verifies object ownership, and are returned only as authenticated private
 image data rather than public download-token URLs.
 
 **My wishes** is available from both the clock and daily feed. It spans older
-days and supports refresh and pagination. It belongs to the existing Firebase
-identity: anonymous account recovery is not implemented, so clearing app data or
-changing identity loses access to that journal.
+days and supports refresh and pagination. It belongs to the current Firebase
+identity.
 
 Caption, visibility, and the selected image are saved per Firebase UID while a
 draft is pending. Supported devices copy the image into the app's document
 directory, so it survives an app restart. A failed submission keeps the draft;
 a confirmed post or **Discard draft** clears it.
+
+## Save my wishes and posting timezone
+
+**Settings → Save my wishes** can link an email/password credential to the current
+anonymous Firebase identity. Linking preserves the same UID, so its journal and
+existing posting record remain attached. Email addresses are shown only to their
+owner in the account screen and never appear in feed or wish responses. The account
+screen also provides password-reset email and explicit sign-out.
+
+Signing into an existing account is refused while the current anonymous identity
+already has wishes, because the app cannot merge two existing identities. Sign out
+first only if you intentionally want a new anonymous identity. An account can still
+be bypassed by creating a new anonymous identity; this is one post per Firebase
+identity, not proof of one post per person.
+
+On first use, the app initializes a valid IANA timezone from the device in a
+server-owned profile. `canPost`, `submitPost`, the 11:11 window, and author-local
+`dayKey` use that stored value; clients cannot supply a timezone with posting calls.
+In Settings, travel requires a deliberate timezone change. It is blocked for 24
+hours after a post and otherwise limited to one change every seven days. The daily
+feed remains viewer-local and reminders remain device-local.
 
 Existing posts have no visibility field and retain their old shared behavior.
 The callable feed treats them as shared during transition. Before tightening
@@ -106,8 +129,8 @@ feed.
 `createdAt` timestamp from that viewer's local midnight through the next local
 midnight, so daylight-saving days can be 23 or 25 hours long. Viewers in
 different timezones can therefore see different daily sets. This is separate
-from `dayKey`, which remains the author's local calendar date and continues to
-enforce one post per anonymous account per local day.
+from `dayKey`, which remains the author's server-saved local calendar date and
+continues to enforce one post per Firebase identity per local day.
 
 Deploy [firestore.indexes.json](firestore.indexes.json) with the Firestore
 rules. The feed requires the composite index on `status` and `createdAt`
@@ -200,7 +223,8 @@ npx expo export --platform all
 The regression tests cover AM/PM window boundaries, timezone/daylight-saving
 rollover, timezone validation, rejecting phone-local image URLs, callable
 validation/concurrent submissions, sparkle toggling, and local reminder
-scheduling. The emulator smoke test also exercises the moderation flow.
+scheduling. The emulator smoke test also exercises moderation, account linking,
+password-reset invocation, travel cooldowns, and server-owned posting timezones.
 Bundling and these checks do not verify live Firebase credentials, deployment,
 or native interactions. Confirm sign-in, photo selection/upload, posting,
 duplicate rejection, notification permission, scheduled reminders, and the
@@ -208,7 +232,8 @@ moderator custom claim on a device against your configured backend.
 
 ## Known scope limits
 
-Anonymous identity belongs to an installation; clearing app storage can create a
-new account. Timezones are supplied by the client. A stronger per-person limit
-would require account and timezone policy beyond this starter. Uploaded photos
-can remain unused if submission fails after upload.
+An anonymous identity belongs to an installation; clearing app storage can create a
+new identity. Email/password recovery only works after the user explicitly saves
+that identity, and two existing identities cannot be merged. A person can still
+create another anonymous identity, so the posting limit is per identity rather than
+per person. Uploaded photos can remain unused if submission fails after upload.

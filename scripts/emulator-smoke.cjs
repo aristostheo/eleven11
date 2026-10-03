@@ -31,7 +31,7 @@ async function main() {
   assert(Number.isFinite(now) && Number.isFinite(windowStart), "Set emulator clock variables");
 
   const { initializeApp } = require("../apps/mobile/node_modules/firebase/app");
-  const { getAuth, connectAuthEmulator, signInAnonymously } = require("../apps/mobile/node_modules/firebase/auth");
+  const { getAuth, connectAuthEmulator, signInAnonymously, linkWithCredential, EmailAuthProvider, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } = require("../apps/mobile/node_modules/firebase/auth");
   const { getStorage, connectStorageEmulator, ref, uploadBytes, getDownloadURL, deleteObject } = require("../apps/mobile/node_modules/firebase/storage");
   const { getFirestore, connectFirestoreEmulator, doc, getDoc } = require("../apps/mobile/node_modules/firebase/firestore");
 
@@ -45,16 +45,21 @@ async function main() {
     connectStorageEmulator(storage, host, Number(storagePort));
     const firestore = getFirestore(app);
     connectFirestoreEmulator(firestore, host, Number(firestorePort));
-    return { app, user, token: await user.getIdToken(), storage, firestore };
+    return { app, auth, user, token: await user.getIdToken(), storage, firestore };
   }
 
   const first = await identity("journal-owner");
   const second = await identity("journal-other");
   const moderator = await identity("journal-moderator");
+  for (const identityToInitialize of [first, second, moderator]) {
+    const profile = await call("initializePostingProfile", identityToInitialize.token, { deviceTimezone: "America/Toronto" });
+    assert.equal(profile.status, 200, JSON.stringify(profile.body));
+    assert.equal(profile.body.result.timezone, "America/Toronto");
+  }
   const clock = await call("getServerTime", first.token, {});
   assert.equal(clock.status, 200, JSON.stringify(clock.body));
   assert(Math.abs(clock.body.result.serverMillis - (now + Date.now() - realStart)) < 60000);
-  const missingAuth = await call("canPost", null, { tzId: "America/Toronto" });
+  const missingAuth = await call("canPost", null, {});
   assert.equal(missingAuth.status, 401, JSON.stringify(missingAuth.body));
 
   const waitMs = Math.max(0, windowStart - (now + Date.now() - realStart) + 2000);
@@ -67,12 +72,12 @@ async function main() {
   });
 
   const privatePost = await call("submitPost", first.token, {
-    tzId: "America/Toronto", caption: "private image", visibility: "private",
+    caption: "private image", visibility: "private",
     media: { type: "image", storagePath: privatePath, w: 1, h: 1 },
   });
   assert.equal(privatePost.status, 200, JSON.stringify(privatePost.body));
   const duplicateAcrossVisibility = await call("submitPost", first.token, {
-    tzId: "America/Toronto", caption: "should be rejected", visibility: "shared", media: { type: "none" },
+    caption: "should be rejected", visibility: "shared", media: { type: "none" },
   });
   assert.equal(duplicateAcrossVisibility.status, 409, JSON.stringify(duplicateAcrossVisibility.body));
 
@@ -82,7 +87,7 @@ async function main() {
     customMetadata: { ownerUid: second.user.uid, visibility: "pending" },
   });
   const sharedPost = await call("submitPost", second.token, {
-    tzId: "America/Toronto", caption: "shared image", visibility: "shared",
+    caption: "shared image", visibility: "shared",
     media: { type: "image", storagePath: sharedPath, w: 1, h: 1 },
   });
   assert.equal(sharedPost.status, 200, JSON.stringify(sharedPost.body));
@@ -128,6 +133,42 @@ async function main() {
   const adminDb = getAdminFirestore();
   await getAdminAuth().setCustomUserClaims(moderator.user.uid, { admin: true });
   const moderatorToken = await moderator.user.getIdToken(true);
+  const arbitraryTimezone = await call("canPost", first.token, { tzId: "Pacific/Auckland" });
+  assert.equal(arbitraryTimezone.status, 400, JSON.stringify(arbitraryTimezone.body));
+  const timezoneAfterPost = await call("updatePostingTimezone", first.token, { timezone: "Pacific/Auckland" });
+  assert.equal(timezoneAfterPost.status, 400, JSON.stringify(timezoneAfterPost.body));
+  const storedTimezone = await call("getPostingProfile", first.token, {});
+  assert.equal(storedTimezone.status, 200, JSON.stringify(storedTimezone.body));
+  assert.equal(storedTimezone.body.result.timezone, "America/Toronto");
+  const traveler = await identity("timezone-traveler");
+  const travelerProfile = await call("initializePostingProfile", traveler.token, { deviceTimezone: "America/Toronto" });
+  assert.equal(travelerProfile.status, 200, JSON.stringify(travelerProfile.body));
+  await adminDb.collection("users").doc(traveler.user.uid).update({ timezoneUpdatedAt: Timestamp.fromMillis(now - 8 * 86400000) });
+  const traveled = await call("updatePostingTimezone", traveler.token, { timezone: "Pacific/Auckland" });
+  assert.equal(traveled.status, 200, JSON.stringify(traveled.body));
+  assert.equal(traveled.body.result.timezone, "Pacific/Auckland");
+  const repeatedTravel = await call("updatePostingTimezone", traveler.token, { timezone: "Asia/Tokyo" });
+  assert.equal(repeatedTravel.status, 400, JSON.stringify(repeatedTravel.body));
+
+  // Linking preserves the post-owning anonymous UID. A separate account sign-in
+  // changes only an empty session; it does not merge either identity's wishes.
+  const originalOwnerUid = first.user.uid;
+  await linkWithCredential(first.user, EmailAuthProvider.credential("owner@example.test", "secret1"));
+  assert.equal(first.user.uid, originalOwnerUid);
+  first.token = await first.user.getIdToken(true);
+  const linkedHistory = await call("getMyWishes", first.token, {});
+  assert.equal(linkedHistory.status, 200, JSON.stringify(linkedHistory.body));
+  assert(linkedHistory.body.result.wishes.some((wish) => wish.id === privatePost.body.result.postId));
+  await sendPasswordResetEmail(first.auth, "owner@example.test");
+  const unrelated = await identity("unrelated-saved-account");
+  await linkWithCredential(unrelated.user, EmailAuthProvider.credential("other@example.test", "secret2"));
+  const emptySession = await identity("empty-sign-in-session");
+  const emptySessionUid = emptySession.user.uid;
+  await signOut(emptySession.auth);
+  const signedInUnrelated = await signInWithEmailAndPassword(emptySession.auth, "other@example.test", "secret2");
+  assert.equal(signedInUnrelated.user.uid, unrelated.user.uid);
+  assert.notEqual(signedInUnrelated.user.uid, emptySessionUid);
+
   const createdAt = Timestamp.fromMillis(now + (Date.now() - realStart));
   await adminDb.collection("posts").doc("older-owner").set({
     uid: first.user.uid, createdAt: Timestamp.fromMillis(createdAt.toMillis() - 86400000), dayKey: "older",
