@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { router } from "expo-router";
+import { isModerator } from "../src/lib/firebase";
 import { loadReminderSettings, setReminderSelection, type ReminderSettings } from "../src/lib/reminders";
 
 export default function Settings() {
   const [settings, setSettings] = useState<ReminderSettings | null>(null);
   const [updating, setUpdating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [moderator, setModerator] = useState(false);
 
   useEffect(() => {
     void loadReminderSettings().then(setSettings).catch(() => setNotice("Couldn’t load reminder settings."));
+    void isModerator().then(setModerator).catch(() => setModerator(false));
   }, []);
 
   const toggle = async (period: "am" | "pm") => {
@@ -51,6 +54,7 @@ export default function Settings() {
         <ReminderToggle label="11:11 PM" enabled={settings.pm} disabled={updating} onPress={() => void toggle("pm")} />
         <Text style={{ color: "rgba(255,255,255,0.55)", marginTop: 4 }}>Timezone: {settings.timezone}</Text>
       </View>}
+      {moderator ? <Pressable onPress={() => router.push("/moderation")} style={{ alignSelf: "flex-start", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.45)", paddingHorizontal: 16, paddingVertical: 11 }}><Text style={{ color: "white", fontWeight: "700" }}>Review reports</Text></Pressable> : null}
       {notice ? <View style={{ backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 16, padding: 14 }}><Text style={{ color: "rgba(255,255,255,0.85)", lineHeight: 20 }}>{notice}</Text></View> : null}
     </View>
   );

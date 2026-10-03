@@ -114,10 +114,44 @@ rules. The feed requires the composite index on `status` and `createdAt`
 (descending). Rules allow reads only for active posts; client writes remain
 blocked.
 
-Changing a post to non-active removes it from future Firestore feed reads, but
-does **not** revoke an image URL that was already public and shared. Media
-revocation and moderation remain a separate milestone. Private image delivery
-does not use those public URLs.
+## Reporting and moderation
+
+Each shared feed card offers **Report wish** with a reason (spam, abuse,
+harassment, or other) and optional details. A signed-in Firebase identity can
+report a particular active shared wish once. The callable validates the target,
+stores the reporter UID only in the private moderation record, and limits an
+identity to five reports per ten minutes. Private, hidden, malformed, missing,
+and duplicate targets are rejected.
+
+Only a Firebase identity with the custom claim `{ admin: true }` can load the
+**Review reports** screen in Settings or dismiss a report/hide its wish. The
+same custom-claim check runs in the review and decision callables; the hidden
+screen is only a convenience. Decisions store the action, moderator UID, and
+server timestamp. Grant or remove that claim only through a reviewed trusted
+Admin SDK process; there is no client-side admin grant flow.
+
+Hiding changes a wish to `status: "hidden"`, so it is excluded from the feed
+callable and denied by Firestore Rules, including direct client reads. The app
+does not return shared download-token URLs. It fetches an active shared image
+through an authenticated callable; hiding marks the object `hidden`, clears its
+download token, and the Storage Rule denies new reads. My wishes keeps the
+owner's caption and marks the wish hidden, but does not serve its shared image.
+If that Storage update fails, the wish still stays hidden from the feed and
+callable. The report remains in the moderator queue as **Retry image
+revocation** and the UI explicitly says that image access was not fully revoked
+until a retry succeeds.
+
+This cannot recall an image that someone already downloaded, copied, or
+screenshotted. Legacy posts with an old `media.url` can likewise retain an
+already-known URL until a reviewed migration/Storage cleanup revokes it; the
+current app and feed callable no longer return that field.
+
+Deploy the Functions, Firestore Rules/indexes, and app update together. The
+existing reviewed visibility-aware Storage Rules are required for hidden-image
+read denial; deploy them too only if the live project has not already received
+the v0.4-or-later rules. The new composite
+`reports(status, createdAt desc)` index is in
+[firestore.indexes.json](firestore.indexes.json).
 
 ## Reactions and local reminders
 
@@ -166,10 +200,11 @@ npx expo export --platform all
 The regression tests cover AM/PM window boundaries, timezone/daylight-saving
 rollover, timezone validation, rejecting phone-local image URLs, callable
 validation/concurrent submissions, sparkle toggling, and local reminder
-scheduling. Bundling and these checks do not verify live Firebase credentials,
-deployment, or native interactions. Confirm sign-in, photo selection/upload,
-posting, duplicate rejection, notification permission, and scheduled reminders
-on a device against your configured backend.
+scheduling. The emulator smoke test also exercises the moderation flow.
+Bundling and these checks do not verify live Firebase credentials, deployment,
+or native interactions. Confirm sign-in, photo selection/upload, posting,
+duplicate rejection, notification permission, scheduled reminders, and the
+moderator custom claim on a device against your configured backend.
 
 ## Known scope limits
 

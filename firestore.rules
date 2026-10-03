@@ -18,9 +18,9 @@ service cloud.firestore {
       // expose owner UIDs. Owners may still read their own document directly.
       // Legacy active documents, which predate visibility, retain their old
       // shared direct-read behavior until a reviewed migration labels them.
-      allow read: if isOwner(resource.data.uid)
-                  || (resource.data.status == "active"
-                      && !resource.data.keys().hasAny(["visibility"]));
+      allow read: if resource.data.status == "active"
+                  && (isOwner(resource.data.uid)
+                      || !resource.data.keys().hasAny(["visibility"]));
 
       // Reactions are an internal per-viewer identity map. Cloud Functions
       // alone may create/delete these records and update aggregate counts.
@@ -30,8 +30,9 @@ service cloud.firestore {
     }
 
     match /reports/{id} {
-      allow create: if isSignedIn();
-      allow read: if false;
+      // Reports and decisions are callable-only. This prevents report details
+      // and reporter identities from reaching authors or regular viewers.
+      allow read, write: if false;
     }
   }
 }

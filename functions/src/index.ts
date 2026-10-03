@@ -37,6 +37,18 @@ const dailyFeedSchema = z.object({ tzId: timezoneSchema, cursor: cursorSchema })
 const historySchema = z.object({ cursor: cursorSchema });
 const privateImageSchema = z.object({ storagePath: z.string().regex(/^uploads\/[^/]+\/[^/]+$/) });
 const reactionSchema = z.object({ postId: z.string().min(1).max(150).regex(/^[^/]+$/) });
+const postIdSchema = z.object({ postId: z.string().min(1).max(150).regex(/^[^/]+$/) });
+const reportReasonSchema = z.enum(["spam", "abuse", "harassment", "other"]);
+const reportSchema = postIdSchema.extend({
+  reason: reportReasonSchema,
+  details: z.string().trim().max(500).optional().default(""),
+});
+const moderationDecisionSchema = z.object({
+  reportId: z.string().min(1).max(200).regex(/^[^/]+$/),
+  action: z.enum(["dismiss", "hide"]),
+});
+const REPORT_WINDOW_MS = 10 * 60 * 1000;
+const MAX_REPORTS_PER_WINDOW = 5;
 
 type ImageMedia = { type: "image"; storagePath: string; w?: number; h?: number };
 type ObjectMetadata = {
@@ -67,6 +79,14 @@ function requireAuth(context: functions.https.CallableContext) {
   return context.auth.uid;
 }
 
+function requireModerator(context: functions.https.CallableContext) {
+  const uid = requireAuth(context);
+  if (context.auth?.token.admin !== true) {
+    throw new functions.https.HttpsError("permission-denied", "Moderator access required");
+  }
+  return uid;
+}
+
 function cursorFor(document: FirebaseFirestore.QueryDocumentSnapshot) {
   const createdAt = document.get("createdAt") as FirebaseFirestore.Timestamp | undefined;
   return createdAt ? { createdAtMillis: createdAt.toMillis(), id: document.id } : null;
@@ -77,8 +97,6 @@ function mediaForDocument(data: FirebaseFirestore.DocumentData) {
   return {
     type: "image" as const,
     storagePath: data.media.storagePath as string | undefined,
-    // Legacy shared posts retain their historic public URL until migrated.
-    sharedUrl: data.media.url as string | undefined,
     w: data.media.w as number | undefined,
     h: data.media.h as number | undefined,
   };
@@ -114,6 +132,7 @@ function ownedWish(document: FirebaseFirestore.QueryDocumentSnapshot) {
     caption: data.caption as string,
     createdAtMillis: createdAt.toMillis(),
     visibility: data.visibility === "private" ? "private" : "shared",
+    status: data.status === "hidden" ? "hidden" : "active",
     media: mediaForDocument(data),
   };
 }
@@ -150,6 +169,19 @@ async function markImageVisibility(
       ownerUid: uid,
       visibility,
       ...(visibility === "private" ? { firebaseStorageDownloadTokens: null } : {}),
+    },
+  });
+}
+
+/** Disable feed access and download tokens for a hidden shared image. */
+async function hideSharedImage(storagePath: string) {
+  const file = bucket.file(storagePath);
+  const [existing] = await file.getMetadata();
+  await file.setMetadata({
+    metadata: {
+      ...existing.metadata,
+      visibility: "hidden",
+      firebaseStorageDownloadTokens: null,
     },
   });
 }
@@ -288,6 +320,185 @@ export const toggleSparkleReaction = functions.https.onCall(async (data, context
     transaction.update(post, { "reacts.sparkle": sparkle });
     return { postId: post.id, reacted: true, count: sparkle };
   });
+});
+
+// ——— report an anonymously shared active wish —————————————————
+export const reportWish = functions.https.onCall(async (data, context) => {
+  const uid = requireAuth(context);
+  const parsed = reportSchema.safeParse(data);
+  if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
+  const post = db.collection("posts").doc(parsed.data.postId);
+  const report = db.collection("reports").doc(`${post.id}_${uid}`);
+  const rateLimit = db.collection("reportRateLimits").doc(uid);
+  const nowMillis = serverMillis();
+  await db.runTransaction(async (transaction) => {
+    const [postSnapshot, reportSnapshot, rateSnapshot] = await Promise.all([
+      transaction.get(post), transaction.get(report), transaction.get(rateLimit),
+    ]);
+    if (!postSnapshot.exists) throw new functions.https.HttpsError("not-found", "Wish not found");
+    const wish = postSnapshot.data();
+    if (!wish || wish.status !== "active" || wish.visibility === "private") {
+      throw new functions.https.HttpsError("permission-denied", "Wish cannot be reported");
+    }
+    if (reportSnapshot.exists) {
+      throw new functions.https.HttpsError("already-exists", "You already reported this wish");
+    }
+    const previous = rateSnapshot.data();
+    const inWindow = typeof previous?.windowStartMillis === "number"
+      && nowMillis - previous.windowStartMillis < REPORT_WINDOW_MS;
+    const count = inWindow ? Number(previous?.count ?? 0) : 0;
+    if (count >= MAX_REPORTS_PER_WINDOW) {
+      throw new functions.https.HttpsError("resource-exhausted", "Too many reports; try again later");
+    }
+    transaction.set(rateLimit, {
+      windowStartMillis: inWindow ? previous.windowStartMillis : nowMillis,
+      count: count + 1,
+      updatedAt: Timestamp.fromMillis(nowMillis),
+    });
+    transaction.create(report, {
+      postId: post.id,
+      reporterUid: uid,
+      reason: parsed.data.reason,
+      details: parsed.data.details,
+      wishCaption: wish.caption,
+      status: "pending",
+      createdAt: Timestamp.fromMillis(nowMillis),
+    });
+  });
+  return { postId: post.id, reported: true };
+});
+
+// ——— admin-only moderation review ————————————————————————
+export const getModerationReports = functions.https.onCall(async (_data, context) => {
+  requireModerator(context);
+  const reports = await db.collection("reports")
+    .where("status", "in", ["pending", "repair-needed"])
+    .orderBy("createdAt", "desc")
+    .limit(50)
+    .get();
+  if (reports.empty) return { reports: [] };
+  const posts = await db.getAll(...reports.docs.map((report) =>
+    db.collection("posts").doc(report.get("postId"))));
+  return {
+    reports: reports.docs.map((report, index) => {
+      const data = report.data();
+      const post = posts[index];
+      const createdAt = data.createdAt as FirebaseFirestore.Timestamp | undefined;
+      return {
+        id: report.id,
+        postId: data.postId as string,
+        reason: data.reason as string,
+        details: data.details as string,
+        caption: data.wishCaption as string,
+        createdAtMillis: createdAt?.toMillis() ?? 0,
+        postStatus: post?.exists ? (post.get("status") as string) : "missing",
+        hasImage: post?.get("media")?.type === "image",
+        needsImageRepair: data.status === "repair-needed",
+      };
+    }),
+  };
+});
+
+export const decideModerationReport = functions.https.onCall(async (data, context) => {
+  const moderatorUid = requireModerator(context);
+  const parsed = moderationDecisionSchema.safeParse(data);
+  if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
+  const report = db.collection("reports").doc(parsed.data.reportId);
+  let hiddenStoragePath: string | null = null;
+  let imageNeedsRepair = false;
+  await db.runTransaction(async (transaction) => {
+    const reportSnapshot = await transaction.get(report);
+    if (!reportSnapshot.exists) throw new functions.https.HttpsError("not-found", "Report not found");
+    const reportData = reportSnapshot.data();
+    const retryingImageRepair = reportData?.status === "repair-needed" && parsed.data.action === "hide";
+    if (!reportData || (reportData.status !== "pending" && !retryingImageRepair)) {
+      throw new functions.https.HttpsError("failed-precondition", "Report was already decided");
+    }
+    const now = Timestamp.fromMillis(serverMillis());
+    const decision = retryingImageRepair ? reportData.decision : {
+      action: parsed.data.action,
+      moderatorUid,
+      decidedAt: now,
+    };
+    if (parsed.data.action === "dismiss") {
+      transaction.update(report, { status: "dismissed", decision });
+      return;
+    }
+    const post = db.collection("posts").doc(reportData.postId);
+    const postSnapshot = await transaction.get(post);
+    if (!postSnapshot.exists) throw new functions.https.HttpsError("not-found", "Wish not found");
+    const wish = postSnapshot.data();
+    const canHide = retryingImageRepair
+      ? wish?.status === "hidden" && wish.visibility !== "private"
+      : wish?.status === "active" && wish.visibility !== "private";
+    if (!wish || !canHide) {
+      throw new functions.https.HttpsError("failed-precondition", "Wish cannot be hidden");
+    }
+    hiddenStoragePath = wish.media?.type === "image" ? wish.media.storagePath as string : null;
+    imageNeedsRepair = Boolean(hiddenStoragePath);
+    if (!retryingImageRepair) {
+      // Hide in Firestore first so feed and callable access stop immediately,
+      // even when the separate Storage metadata operation fails.
+      transaction.update(post, { status: "hidden", moderation: decision });
+    }
+    transaction.update(report, imageNeedsRepair ? {
+      status: "repair-needed",
+      decision,
+      mediaRevocation: { status: "pending", attemptedAt: now, attemptedBy: moderatorUid },
+    } : { status: "resolved", decision });
+  });
+  if (parsed.data.action === "hide" && hiddenStoragePath) {
+    try {
+      await hideSharedImage(hiddenStoragePath);
+      await report.update({
+        status: "resolved",
+        mediaRevocation: {
+          status: "complete",
+          completedAt: Timestamp.fromMillis(serverMillis()),
+          completedBy: moderatorUid,
+        },
+      });
+    } catch {
+      // The post stays hidden, but keep an admin-visible repair item instead
+      // of claiming that a Storage URL/token was revoked successfully.
+      await report.update({
+        status: "repair-needed",
+        mediaRevocation: {
+          status: "failed",
+          attemptedAt: Timestamp.fromMillis(serverMillis()),
+          attemptedBy: moderatorUid,
+        },
+      });
+      return { reportId: report.id, action: parsed.data.action, mediaRevocation: "failed" };
+    }
+  }
+  return {
+    reportId: report.id,
+    action: parsed.data.action,
+    mediaRevocation: imageNeedsRepair ? "complete" : "not-applicable",
+  };
+});
+
+// ——— authenticated bytes for an active shared feed image —————————
+export const getSharedImage = functions.https.onCall(async (data, context) => {
+  requireAuth(context);
+  const parsed = postIdSchema.safeParse(data);
+  if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
+  const post = await db.collection("posts").doc(parsed.data.postId).get();
+  if (!post.exists) throw new functions.https.HttpsError("not-found", "Wish not found");
+  const wish = post.data();
+  if (!wish || wish.status !== "active" || wish.visibility === "private" || wish.media?.type !== "image") {
+    throw new functions.https.HttpsError("permission-denied", "Image is unavailable");
+  }
+  const storagePath = wish.media.storagePath as string | undefined;
+  if (!storagePath) throw new functions.https.HttpsError("failed-precondition", "Image cannot be safely served");
+  const file = bucket.file(storagePath);
+  const [metadata] = await file.getMetadata();
+  if (metadata.metadata?.visibility !== "shared") {
+    throw new functions.https.HttpsError("permission-denied", "Image is unavailable");
+  }
+  const [bytes] = await file.download();
+  return { dataUrl: `data:${metadata.contentType};base64,${bytes.toString("base64")}` };
 });
 
 // ——— authenticated personal journal ——————————————————————

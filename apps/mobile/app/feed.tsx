@@ -1,18 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
+  Modal,
   Pressable,
   RefreshControl,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { router } from "expo-router";
 import { DateTime } from "luxon";
 import { LinearGradient } from "expo-linear-gradient";
 import { feedDayKey, loadDailyFeed, type FeedCursor, type Wish, type WishMedia } from "../src/lib/feed";
-import { getSharedPhotoUrl, toggleSparkleReaction } from "../src/lib/firebase";
+import { getSharedPhotoDataUrl, reportWish, toggleSparkleReaction } from "../src/lib/firebase";
 import { useServerClock } from "../src/utils/useServerClock";
 
 export default function DailyFeed() {
@@ -27,6 +30,10 @@ export default function DailyFeed() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [reactingPostId, setReactingPostId] = useState<string | null>(null);
+  const [reportingWish, setReportingWish] = useState<Wish | null>(null);
+  const [reportReason, setReportReason] = useState<"spam" | "abuse" | "harassment" | "other">("spam");
+  const [reportDetails, setReportDetails] = useState("");
+  const [submittingReport, setSubmittingReport] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -87,6 +94,24 @@ export default function DailyFeed() {
     }
   }, [reactingPostId]);
 
+  const submitReport = useCallback(async () => {
+    if (!reportingWish || submittingReport) return;
+    setSubmittingReport(true);
+    try {
+      await reportWish({ postId: reportingWish.id, reason: reportReason, details: reportDetails.trim() });
+      setReportingWish(null);
+      setReportDetails("");
+      Alert.alert("Report submitted", "Thanks. A moderator can now review this wish.");
+    } catch (cause) {
+      const code = (cause as { code?: string }).code;
+      Alert.alert("Couldn’t submit report", code === "functions/already-exists"
+        ? "You already reported this wish."
+        : "Please try again later.");
+    } finally {
+      setSubmittingReport(false);
+    }
+  }, [reportDetails, reportReason, reportingWish, submittingReport]);
+
   return (
     <View style={{ flex: 1, backgroundColor: "#0a0814" }}>
       <LinearGradient
@@ -112,7 +137,12 @@ export default function DailyFeed() {
             <Text style={{ color: "rgba(255,255,255,0.68)" }}>{subtitle}</Text>
           </View>
         }
-        renderItem={({ item }) => <WishCard wish={item} reacting={reactingPostId === item.id} onToggleReaction={toggleReaction} />}
+        renderItem={({ item }) => <WishCard
+          wish={item}
+          reacting={reactingPostId === item.id}
+          onToggleReaction={toggleReaction}
+          onReport={(wish) => { setReportingWish(wish); setReportReason("spam"); setReportDetails(""); }}
+        />}
         ListEmptyComponent={
           loading ? (
             <View style={{ padding: 36, alignItems: "center", gap: 12 }}>
@@ -142,6 +172,16 @@ export default function DailyFeed() {
         onEndReached={() => void loadMore()}
         onEndReachedThreshold={0.5}
       />
+      <ReportModal
+        wish={reportingWish}
+        reason={reportReason}
+        details={reportDetails}
+        submitting={submittingReport}
+        onChangeReason={setReportReason}
+        onChangeDetails={setReportDetails}
+        onClose={() => !submittingReport && setReportingWish(null)}
+        onSubmit={() => void submitReport()}
+      />
     </View>
   );
 }
@@ -150,10 +190,12 @@ function WishCard({
   wish,
   reacting,
   onToggleReaction,
+  onReport,
 }: {
   wish: Wish;
   reacting: boolean;
   onToggleReaction: (postId: string) => void;
+  onReport: (wish: Wish) => void;
 }) {
   const postedAt = wish.createdAtMillis
     ? DateTime.fromMillis(wish.createdAtMillis).toLocal().toFormat("h:mm a")
@@ -161,7 +203,7 @@ function WishCard({
   return (
     <View style={{ backgroundColor: "rgba(255,255,255,0.1)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: 20, padding: 16, gap: 12 }}>
       <Text style={{ color: "white", fontSize: 17, lineHeight: 24 }}>{wish.caption}</Text>
-      {wish.media.type === "image" ? <SharedWishImage media={wish.media} /> : null}
+      {wish.media.type === "image" ? <SharedWishImage postId={wish.id} media={wish.media} /> : null}
       <Text style={{ color: "rgba(255,255,255,0.58)", fontSize: 13 }}>Posted {postedAt}</Text>
       <Pressable
         onPress={() => void onToggleReaction(wish.id)}
@@ -183,17 +225,52 @@ function WishCard({
         <Text style={{ fontSize: 17 }}>✨</Text>
         <Text style={{ color: "white", fontWeight: "700" }}>{wish.reactions.sparkle}</Text>
       </Pressable>
+      <Pressable onPress={() => onReport(wish)} accessibilityRole="button" accessibilityLabel="Report wish">
+        <Text style={{ color: "rgba(255,255,255,0.62)", fontWeight: "700" }}>Report wish</Text>
+      </Pressable>
     </View>
   );
 }
 
-function SharedWishImage({ media }: { media: WishMedia }) {
-  const [uri, setUri] = useState(media.sharedUrl ?? null);
+function SharedWishImage({ postId, media }: { postId: string; media: WishMedia }) {
+  const [uri, setUri] = useState<string | null>(null);
   useEffect(() => {
-    if (media.sharedUrl || !media.storagePath) return;
-    void getSharedPhotoUrl(media.storagePath).then(setUri).catch(() => setUri(null));
-  }, [media.sharedUrl, media.storagePath]);
+    setUri(null);
+    if (!media.storagePath) return;
+    void getSharedPhotoDataUrl(postId).then(setUri).catch(() => setUri(null));
+  }, [postId, media.storagePath]);
   return uri ? <Image source={{ uri }} style={{ width: "100%", aspectRatio: 1, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.12)" }} resizeMode="cover" /> : null;
+}
+
+function ReportModal({
+  wish, reason, details, submitting, onChangeReason, onChangeDetails, onClose, onSubmit,
+}: {
+  wish: Wish | null;
+  reason: "spam" | "abuse" | "harassment" | "other";
+  details: string;
+  submitting: boolean;
+  onChangeReason: (reason: "spam" | "abuse" | "harassment" | "other") => void;
+  onChangeDetails: (details: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const reasons: Array<[typeof reason, string]> = [["spam", "Spam"], ["abuse", "Abuse"], ["harassment", "Harassment"], ["other", "Other"]];
+  return <Modal visible={wish !== null} transparent animationType="fade" onRequestClose={onClose}>
+    <View style={{ flex: 1, justifyContent: "center", padding: 24, backgroundColor: "rgba(0,0,0,0.6)" }}>
+      <View style={{ backgroundColor: "#20183d", borderRadius: 22, padding: 20, gap: 14 }}>
+        <Text style={{ color: "white", fontSize: 22, fontWeight: "800" }}>Report wish</Text>
+        <Text style={{ color: "rgba(255,255,255,0.7)", lineHeight: 20 }}>Choose a reason. Details are optional and visible only to moderators.</Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {reasons.map(([value, label]) => <Pressable key={value} onPress={() => onChangeReason(value)} style={{ paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14, backgroundColor: reason === value ? "rgba(166,124,255,0.45)" : "rgba(255,255,255,0.12)" }}><Text style={{ color: "white", fontWeight: "700" }}>{label}</Text></Pressable>)}
+        </View>
+        <TextInput value={details} onChangeText={onChangeDetails} editable={!submitting} multiline maxLength={500} placeholder="Optional details" placeholderTextColor="rgba(255,255,255,0.45)" style={{ minHeight: 82, borderWidth: 1, borderColor: "rgba(255,255,255,0.25)", borderRadius: 14, padding: 12, color: "white", textAlignVertical: "top" }} />
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 16, alignItems: "center" }}>
+          <Pressable onPress={onClose} disabled={submitting}><Text style={{ color: "rgba(255,255,255,0.72)", fontWeight: "700" }}>Cancel</Text></Pressable>
+          <Pressable onPress={onSubmit} disabled={submitting} style={{ backgroundColor: "white", borderRadius: 14, paddingHorizontal: 16, paddingVertical: 10, opacity: submitting ? 0.65 : 1 }}><Text style={{ color: "#0a0814", fontWeight: "800" }}>{submitting ? "Sending…" : "Send report"}</Text></Pressable>
+        </View>
+      </View>
+    </View>
+  </Modal>;
 }
 
 function StateCard({ message, action, onPress }: { message: string; action: string; onPress: () => void }) {

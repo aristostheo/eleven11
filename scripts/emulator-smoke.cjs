@@ -50,6 +50,7 @@ async function main() {
 
   const first = await identity("journal-owner");
   const second = await identity("journal-other");
+  const moderator = await identity("journal-moderator");
   const clock = await call("getServerTime", first.token, {});
   assert.equal(clock.status, 200, JSON.stringify(clock.body));
   assert(Math.abs(clock.body.result.serverMillis - (now + Date.now() - realStart)) < 60000);
@@ -85,6 +86,8 @@ async function main() {
     media: { type: "image", storagePath: sharedPath, w: 1, h: 1 },
   });
   assert.equal(sharedPost.status, 200, JSON.stringify(sharedPost.body));
+  const sharedImage = await call("getSharedImage", first.token, { postId: sharedPost.body.result.postId });
+  assert.equal(sharedImage.status, 200, JSON.stringify(sharedImage.body));
 
   // Reactions are callable-only, independent of the posting window. A viewer
   // can toggle exactly one sparkle, and both identities update the count safely.
@@ -120,8 +123,11 @@ async function main() {
 
   const { initializeApp: initializeAdminApp, getApps } = require("../functions/node_modules/firebase-admin/lib/app");
   const { getFirestore: getAdminFirestore, Timestamp } = require("../functions/node_modules/firebase-admin/lib/firestore");
+  const { getAuth: getAdminAuth } = require("../functions/node_modules/firebase-admin/lib/auth");
   if (!getApps().length) initializeAdminApp({ projectId: project, storageBucket: bucket });
   const adminDb = getAdminFirestore();
+  await getAdminAuth().setCustomUserClaims(moderator.user.uid, { admin: true });
+  const moderatorToken = await moderator.user.getIdToken(true);
   const createdAt = Timestamp.fromMillis(now + (Date.now() - realStart));
   await adminDb.collection("posts").doc("older-owner").set({
     uid: first.user.uid, createdAt: Timestamp.fromMillis(createdAt.toMillis() - 86400000), dayKey: "older",
@@ -133,6 +139,77 @@ async function main() {
       caption: `shared page ${index}`, visibility: "shared", media: { type: "none" }, status: "active",
     });
   }
+
+  const emptyReview = await call("getModerationReports", moderatorToken, {});
+  assert.equal(emptyReview.status, 200, JSON.stringify(emptyReview.body));
+  assert.deepEqual(emptyReview.body.result.reports, []);
+
+  const unauthenticatedReport = await call("reportWish", null, { postId: sharedPost.body.result.postId, reason: "spam" });
+  assert.equal(unauthenticatedReport.status, 401, JSON.stringify(unauthenticatedReport.body));
+  const privateReport = await call("reportWish", second.token, { postId: privatePost.body.result.postId, reason: "spam" });
+  assert.equal(privateReport.status, 403, JSON.stringify(privateReport.body));
+  const missingReport = await call("reportWish", first.token, { postId: "missing-wish", reason: "spam" });
+  assert.equal(missingReport.status, 404, JSON.stringify(missingReport.body));
+  const invalidReport = await call("reportWish", first.token, { postId: sharedPost.body.result.postId, reason: "invalid" });
+  assert.equal(invalidReport.status, 400, JSON.stringify(invalidReport.body));
+  const firstReport = await call("reportWish", first.token, {
+    postId: sharedPost.body.result.postId, reason: "spam", details: "Test report",
+  });
+  assert.equal(firstReport.status, 200, JSON.stringify(firstReport.body));
+  const duplicateReport = await call("reportWish", first.token, { postId: sharedPost.body.result.postId, reason: "spam" });
+  assert.equal(duplicateReport.status, 409, JSON.stringify(duplicateReport.body));
+  const secondReport = await call("reportWish", second.token, { postId: sharedPost.body.result.postId, reason: "abuse" });
+  assert.equal(secondReport.status, 200, JSON.stringify(secondReport.body));
+  const regularReview = await call("getModerationReports", first.token, {});
+  assert.equal(regularReview.status, 403, JSON.stringify(regularReview.body));
+  const review = await call("getModerationReports", moderatorToken, {});
+  assert.equal(review.status, 200, JSON.stringify(review.body));
+  assert.equal(review.body.result.reports.length, 2);
+  assert(review.body.result.reports.every((report) => !("reporterUid" in report)));
+  const dismissed = await call("decideModerationReport", moderatorToken, {
+    reportId: review.body.result.reports.find((report) => report.reason === "spam").id, action: "dismiss",
+  });
+  assert.equal(dismissed.status, 200, JSON.stringify(dismissed.body));
+  const nonAdminDecision = await call("decideModerationReport", first.token, {
+    reportId: review.body.result.reports.find((report) => report.reason === "abuse").id, action: "hide",
+  });
+  assert.equal(nonAdminDecision.status, 403, JSON.stringify(nonAdminDecision.body));
+  const imageAfterDismissal = await call("getSharedImage", first.token, { postId: sharedPost.body.result.postId });
+  assert.equal(imageAfterDismissal.status, 200, JSON.stringify(imageAfterDismissal.body));
+  // A bad path makes the actual Storage metadata update fail after the
+  // Firestore hide. The report must remain admin-visible for a later repair.
+  await adminDb.collection("posts").doc(sharedPost.body.result.postId).update({ "media.storagePath": `${sharedPath}.missing` });
+  const failedHide = await call("decideModerationReport", moderatorToken, {
+    reportId: review.body.result.reports.find((report) => report.reason === "abuse").id, action: "hide",
+  });
+  assert.equal(failedHide.status, 200, JSON.stringify(failedHide.body));
+  assert.equal(failedHide.body.result.mediaRevocation, "failed");
+  const hiddenSharedImage = await call("getSharedImage", first.token, { postId: sharedPost.body.result.postId });
+  assert.equal(hiddenSharedImage.status, 403, JSON.stringify(hiddenSharedImage.body));
+  assert((await getDownloadURL(ref(first.storage, sharedPath))).includes("shared.png"));
+  await assert.rejects(getDoc(doc(first.firestore, "posts", sharedPost.body.result.postId)), { code: "permission-denied" });
+  await assert.rejects(getDoc(doc(second.firestore, "posts", sharedPost.body.result.postId)), { code: "permission-denied" });
+  const repairReview = await call("getModerationReports", moderatorToken, {});
+  assert.equal(repairReview.status, 200, JSON.stringify(repairReview.body));
+  assert.equal(repairReview.body.result.reports.length, 1);
+  assert.equal(repairReview.body.result.reports[0].needsImageRepair, true);
+  await adminDb.collection("posts").doc(sharedPost.body.result.postId).update({ "media.storagePath": sharedPath });
+  const repairedHide = await call("decideModerationReport", moderatorToken, {
+    reportId: repairReview.body.result.reports[0].id, action: "hide",
+  });
+  assert.equal(repairedHide.status, 200, JSON.stringify(repairedHide.body));
+  assert.equal(repairedHide.body.result.mediaRevocation, "complete");
+  await assert.rejects(getDownloadURL(ref(first.storage, sharedPath)), { code: "storage/unauthorized" });
+  const emptyAfterRepair = await call("getModerationReports", moderatorToken, {});
+  assert.equal(emptyAfterRepair.status, 200, JSON.stringify(emptyAfterRepair.body));
+  assert.deepEqual(emptyAfterRepair.body.result.reports, []);
+
+  for (let index = 0; index < 4; index += 1) {
+    const rateReport = await call("reportWish", first.token, { postId: `shared-page-${index}`, reason: "other" });
+    assert.equal(rateReport.status, 200, JSON.stringify(rateReport.body));
+  }
+  const rateLimitedReport = await call("reportWish", first.token, { postId: "shared-page-4", reason: "other" });
+  assert.equal(rateLimitedReport.status, 429, JSON.stringify(rateLimitedReport.body));
   await adminDb.collection("posts").doc("hidden-wish").set({
     uid: "hidden-owner", createdAt, dayKey: "seed", caption: "hidden", visibility: "shared",
     media: { type: "none" }, status: "hidden", reacts: { sparkle: 0 },
@@ -153,6 +230,7 @@ async function main() {
   const otherHistory = await call("getMyWishes", second.token, {});
   assert.equal(otherHistory.status, 200, JSON.stringify(otherHistory.body));
   assert.equal(otherHistory.body.result.wishes.length, 1);
+  assert.equal(otherHistory.body.result.wishes[0].status, "hidden");
 
   const firstFeed = await call("getDailyWishes", first.token, { tzId: "America/Toronto" });
   assert.equal(firstFeed.status, 200, JSON.stringify(firstFeed.body));
@@ -161,11 +239,9 @@ async function main() {
   assert.equal(secondFeed.status, 200, JSON.stringify(secondFeed.body));
   assert(secondFeed.body.result.wishes.length >= 1);
   const feedWishes = [...firstFeed.body.result.wishes, ...secondFeed.body.result.wishes];
-  assert(feedWishes.some((wish) => wish.id === sharedPost.body.result.postId));
+  assert(!feedWishes.some((wish) => wish.id === sharedPost.body.result.postId));
   assert(!feedWishes.some((wish) => wish.id === privatePost.body.result.postId));
   assert(feedWishes.every((wish) => !("uid" in wish)));
-  const sharedWish = feedWishes.find((wish) => wish.id === sharedPost.body.result.postId);
-  assert.deepEqual(sharedWish.reactions, { sparkle: 2, viewerReacted: true });
 
   const temporaryPath = `uploads/${first.user.uid}/temporary.png`;
   await uploadBytes(ref(first.storage, temporaryPath), png, {
@@ -180,6 +256,7 @@ async function main() {
     feed: { sharedAnonymous: true, privateExcluded: true, pagination: true },
     history: { ownerOlderWish: true, otherIsolated: true },
     reactions: { repeatToggle: true, consistentCount: true, privateAndHiddenRejected: true },
+    moderation: { duplicateRejected: true, rateLimited: true, adminOnly: true, hiddenWishExcluded: true, hiddenImageBlocked: true },
     duplicateAcrossVisibility: duplicateAcrossVisibility.status,
   }));
 }

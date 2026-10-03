@@ -6,7 +6,6 @@ export type FeedCursor = { createdAtMillis: number; id: string } | null;
 export type WishMedia = {
   type: "none" | "image";
   storagePath?: string;
-  sharedUrl?: string;
   w?: number;
   h?: number;
 };
