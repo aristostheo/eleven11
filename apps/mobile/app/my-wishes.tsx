@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, Text, View } from "react-native";
 import { router } from "expo-router";
 import { DateTime } from "luxon";
-import { getMyWishes, getPrivatePhotoDataUrl, getSharedPhotoUrl } from "../src/lib/firebase";
+import { getMyWishes, getPrivatePhotoDataUrl, getSharedPhotoDataUrl } from "../src/lib/firebase";
 import type { FeedCursor, WishMedia } from "../src/lib/feed";
 
 type JournalWish = {
@@ -10,6 +10,7 @@ type JournalWish = {
   caption: string;
   createdAtMillis: number;
   visibility: "private" | "shared";
+  status: "active" | "hidden";
   media: WishMedia;
 };
 type Page = { wishes: JournalWish[]; cursor: FeedCursor; hasMore: boolean };
@@ -87,7 +88,8 @@ function JournalCard({ wish }: { wish: JournalWish }) {
   const date = DateTime.fromMillis(wish.createdAtMillis).toLocal().toFormat("ccc, LLL d · h:mm a");
   return <View style={{ backgroundColor: "rgba(255,255,255,0.1)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", borderRadius: 20, padding: 16, gap: 12 }}>
     <Text style={{ color: "white", fontSize: 17, lineHeight: 24 }}>{wish.caption}</Text>
-    {wish.media.type === "image" ? <JournalImage media={wish.media} privateImage={wish.visibility === "private"} /> : null}
+    {wish.status === "hidden" ? <Text style={{ color: "#ffb6bd", lineHeight: 20 }}>Hidden by moderation. Only you can see this journal entry; its shared image is unavailable.</Text> : null}
+    {wish.media.type === "image" && wish.status !== "hidden" ? <JournalImage postId={wish.id} media={wish.media} privateImage={wish.visibility === "private"} /> : null}
     <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
       <Text style={{ color: "rgba(255,255,255,0.58)", fontSize: 13 }}>{date}</Text>
       <Text style={{ color: wish.visibility === "private" ? "#d7c7ff" : "#9ee7c1", fontSize: 13, fontWeight: "700" }}>{wish.visibility === "private" ? "Only me" : "Shared anonymously"}</Text>
@@ -95,13 +97,14 @@ function JournalCard({ wish }: { wish: JournalWish }) {
   </View>;
 }
 
-function JournalImage({ media, privateImage }: { media: WishMedia; privateImage: boolean }) {
-  const [uri, setUri] = useState<string | null>(media.sharedUrl ?? null);
+function JournalImage({ postId, media, privateImage }: { postId: string; media: WishMedia; privateImage: boolean }) {
+  const [uri, setUri] = useState<string | null>(null);
   useEffect(() => {
-    if (media.sharedUrl || !media.storagePath) return;
-    const loader = privateImage ? getPrivatePhotoDataUrl : getSharedPhotoUrl;
-    void loader(media.storagePath).then(setUri).catch(() => setUri(null));
-  }, [media.sharedUrl, media.storagePath, privateImage]);
+    setUri(null);
+    if (!media.storagePath) return;
+    const loader = privateImage ? getPrivatePhotoDataUrl(media.storagePath) : getSharedPhotoDataUrl(postId);
+    void Promise.resolve(loader).then(setUri).catch(() => setUri(null));
+  }, [postId, media.storagePath, privateImage]);
   return uri ? <Image source={{ uri }} style={{ width: "100%", aspectRatio: 1, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.12)" }} resizeMode="cover" /> : <Text style={{ color: "rgba(255,255,255,0.56)" }}>Image unavailable</Text>;
 }
 

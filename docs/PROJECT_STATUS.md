@@ -1,9 +1,9 @@
-# Project status — 2026-10-01
+# Project status — 2026-10-03
 
 ## What exists
 
 Eleven11 is a posting prototype with a read-only daily feed, private wish
-journal, reactions, and local reminders. The app routes are the clock
+journal, reactions, local reminders, and a moderator review flow. The app routes are the clock
 (`app/index.tsx`), composer (`app/compose.tsx`), feed (`app/feed.tsx`), journal
 (`app/my-wishes.tsx`), and settings (`app/settings.tsx`). Items below distinguish
 the implemented local v0.5 scope from remaining product work.
@@ -41,16 +41,27 @@ Implemented locally:
 - Device-local 11:11 reminder settings for AM, PM, or both. Permission is asked
   only when enabling, disabled periods are cancelled, and timezone changes are
   reconciled when the app resumes.
+- Shared feed cards can be reported once per Firebase identity with a validated
+  reason and optional details. Reports are callable-only, rate-limited to five
+  per identity per ten minutes, and never appear in feed responses.
+- Moderator review is protected by a Firebase Auth custom `admin: true` claim
+  in the server callables. A decision records the action, moderator UID, and
+  server timestamp; it can dismiss a report or hide a shared wish.
+- Hiding excludes a wish from callable feed results and all direct Firestore
+  client reads. Shared images are served to the app only by an authenticated
+  callable; hiding marks the object hidden, clears its download token, and
+  blocks future Storage-rule reads. My wishes retains an owner-facing hidden
+  journal entry without the shared image.
 
 ## Unfinished features and integration work
 
 | Priority | Area | Evidence / gap | Completion target |
 | --- | --- | --- | --- |
 | First | Firebase/device integration | v0.5 was exercised only in isolated emulators; no live deployment or device posting test was performed. | Deploy reviewed functions/rules/indexes, then verify private/shared text/photo submission and reactions on iPhone. |
-| First | Feed moderation and media revocation | The feed hides non-active Firestore documents, but an already shared public Storage download URL remains usable. | Use revocable media delivery and moderation actions before claiming hidden media is inaccessible. |
+| First | Moderator administration | The app has no secure process to grant, audit, or revoke the Firebase `admin` custom claim. | Define a reviewed operational Admin SDK procedure before enabling production review access. |
 | Before public launch | Reaction moderation | A single sparkle toggle is implemented. There are no rate limits, abuse controls, reaction notifications, or moderation workflow. | Define abuse limits and moderation policy before public launch. |
 | Before public launch | Reminder device behavior | Unit checks cover scheduling, cancellation, denied permission, and timezone rescheduling. Native permission prompts, scheduled delivery, timezone changes, and notification taps have not been observed on a device. | Test iOS and Android devices after an app build. |
-| Before public launch | Reports and moderation | Only a report counter and a permissive signed-in `/reports` create rule exist. No report UI, validated payload, review flow or moderation actions. The feed excludes non-active Firestore documents but cannot revoke public image URLs already shared. | Define/report reasons, validate ownership/target data, rate-limit reports, moderation actions, and revocable media delivery. |
+| Before public launch | Legacy image revocation | New app image delivery is revocable, but a URL already downloaded, copied, screenshotted, or issued by a legacy `media.url` cannot be recalled by hiding the Firestore post. | Inventory legacy URLs and run a reviewed Storage cleanup/migration; document that already copied media remains outside control. |
 | Before public launch | Posting identity/timezone policy | Anonymous users can reset their identity; the timezone comes from the caller. Daily claims protect one UID/date, not one person or a rolling 24 hours. | Define stable account and timezone-change rules if a stronger daily limit is required. |
 | Before public launch | Media lifecycle and ownership | The backend now verifies the uploader UID, path, image type, and size before accepting an object reference; failed or expired submissions can still leave an orphan if cleanup cannot complete. | Add scheduled orphan cleanup and define post/media deletion. |
 | Next | Draft/retry experience | Drafts restore caption, visibility, and durable local photos; no upload progress UI exists. | Add upload progress and device-level recovery testing. |
@@ -116,12 +127,6 @@ Track upstream-compatible fixes and assess runtime exposure before public releas
   Firestore rules/index deployment. No Firebase deployment was performed for
   v0.3.
 
-## Suggested next milestone
-
-Before reactions or social features, settle moderation and media revocation:
-hiding a Firestore post cannot invalidate a public image URL that was already
-shared. Then revisit stable identity/timezone policy and media ownership.
-
 ## v0.4 verification — wish journal
 
 - Isolated Firebase Emulator Suite run passed using two anonymous identities:
@@ -164,3 +169,33 @@ shared. Then revisit stable identity/timezone policy and media ownership.
   deployment still includes the reviewed Storage Rules and existing indexes.
   Expo Notifications must be checked in a native app for permission, delivery,
   timezone behavior, and notification taps.
+
+## v0.6 verification — moderation
+
+- Isolated Firebase Emulator Suite run passed with two normal anonymous
+  identities and a third identity granted the emulator-only `admin: true`
+  custom claim. It accepted one report per identity for an active shared photo,
+  rejected unauthenticated, private, missing, duplicate, and rate-limited
+  reports, and did not return reporter UIDs in the moderator response.
+- A normal identity was denied report review. The admin identity dismissed one
+  report and hid the shared wish from the other. After hiding, the test
+  confirmed exclusion from the feed, denied direct Firestore reads for both the
+  owner and a viewer, denied the authenticated shared-image callable, and
+  denied a fresh Storage download URL request under the deployed Storage Rule.
+  The owner history callable still returned the hidden journal entry with
+  `status: "hidden"`.
+- Functions build/lint, mobile TypeScript typecheck, and all 14 existing
+  regression tests passed. Expo export completed for iOS, Android, and web.
+- Deployment requirement: deploy the v0.6 Functions, Firestore Rules, and
+  Firestore indexes together; the new reports query needs the
+  `reports(status, createdAt desc)` composite index. Hidden-image denial relies
+  on the existing v0.4-or-later Storage Rules, which must be deployed if they
+  are not already live. Provision moderator access through a reviewed trusted
+  Admin SDK/custom-claim process. No live resources, data, migrations, pushes,
+  or merges were performed.
+
+## Suggested next milestone
+
+Define the production moderator-claim operation and legacy-image cleanup plan,
+then revisit stable identity/timezone policy and media lifecycle. No account or
+timezone changes are part of v0.6.

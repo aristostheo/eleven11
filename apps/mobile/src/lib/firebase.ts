@@ -17,7 +17,7 @@ import {
 } from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getFunctions, httpsCallable, connectFunctionsEmulator } from "firebase/functions";
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, connectStorageEmulator } from "firebase/storage";
+import { getStorage, ref, uploadBytes, deleteObject, connectStorageEmulator } from "firebase/storage";
 import { emulatorEnabled, emulatorHost } from "../utils/emulator";
 
 // --- eleven11 config ---
@@ -90,6 +90,10 @@ const _getDailyWishes = httpsCallable(functions, "getDailyWishes");
 const _getMyWishes = httpsCallable(functions, "getMyWishes");
 const _getPrivateImage = httpsCallable(functions, "getPrivateImage");
 const _toggleSparkleReaction = httpsCallable(functions, "toggleSparkleReaction");
+const _getSharedImage = httpsCallable(functions, "getSharedImage");
+const _reportWish = httpsCallable(functions, "reportWish");
+const _getModerationReports = httpsCallable(functions, "getModerationReports");
+const _decideModerationReport = httpsCallable(functions, "decideModerationReport");
 
 // Ensure a signed-in user (silent anonymous)
 let signInPromise: Promise<User> | null = null;
@@ -126,12 +130,13 @@ export async function deleteUploadedPhoto(storagePath: string): Promise<void> {
   await deleteObject(ref(storage, storagePath));
 }
 
-export async function getSharedPhotoUrl(storagePath: string): Promise<string> {
-  return getDownloadURL(ref(storage, storagePath));
-}
-
 export async function getPrivatePhotoDataUrl(storagePath: string): Promise<string> {
   const { data } = await _getPrivateImage({ storagePath }) as { data: { dataUrl: string } };
+  return data.dataUrl;
+}
+
+export async function getSharedPhotoDataUrl(postId: string): Promise<string> {
+  const { data } = await _getSharedImage({ postId }) as { data: { dataUrl: string } };
   return data.dataUrl;
 }
 
@@ -166,4 +171,39 @@ export function getMyWishes(payload: { cursor?: { createdAtMillis: number; id: s
 export async function toggleSparkleReaction(postId: string) {
   await ensureAuth();
   return _toggleSparkleReaction({ postId });
+}
+
+export async function reportWish(payload: {
+  postId: string;
+  reason: "spam" | "abuse" | "harassment" | "other";
+  details?: string;
+}) {
+  await ensureAuth();
+  return _reportWish(payload);
+}
+
+export type ModerationReport = {
+  id: string;
+  postId: string;
+  reason: string;
+  details: string;
+  caption: string;
+  createdAtMillis: number;
+  postStatus: "active" | "hidden" | "missing";
+  hasImage: boolean;
+};
+
+export async function getModerationReports(): Promise<ModerationReport[]> {
+  const { data } = await _getModerationReports({}) as { data: { reports: ModerationReport[] } };
+  return data.reports;
+}
+
+export function decideModerationReport(reportId: string, action: "dismiss" | "hide") {
+  return _decideModerationReport({ reportId, action });
+}
+
+export async function isModerator(): Promise<boolean> {
+  const user = await ensureAuth();
+  const token = await user.getIdTokenResult();
+  return token.claims.admin === true;
 }
