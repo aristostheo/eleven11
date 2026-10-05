@@ -96,18 +96,22 @@ existing posting record remain attached. Email addresses are shown only to their
 owner in the account screen and never appear in feed or wish responses. The account
 screen also provides password-reset email and explicit sign-out.
 
-Signing into an existing account is refused while the current anonymous identity
-already has wishes, because the app cannot merge two existing identities. Sign out
-first only if you intentionally want a new anonymous identity. An account can still
-be bypassed by creating a new anonymous identity; this is one post per Firebase
-identity, not proof of one post per person.
+When the current anonymous identity already has wishes, signing into an existing
+account requires an explicit warning and confirmation. A successful sign-in then
+leaves those unsaved wishes behind; they cannot be recovered through the app.
+Invalid credentials leave the current anonymous identity in place. The app cannot
+merge two existing identities. An account can still be bypassed by creating a new
+anonymous identity; this is one post per Firebase identity, not proof of one post
+per person.
 
 On first use, the app initializes a valid IANA timezone from the device in a
 server-owned profile. `canPost`, `submitPost`, the 11:11 window, and author-local
 `dayKey` use that stored value; clients cannot supply a timezone with posting calls.
 In Settings, travel requires a deliberate timezone change. It is blocked for 24
 hours after a post and otherwise limited to one change every seven days. The daily
-feed remains viewer-local and reminders remain device-local.
+feed remains viewer-local and reminders remain device-local. The clock reloads the
+server-saved posting timezone whenever it returns to focus or Firebase changes the
+current identity.
 
 Existing posts have no visibility field and retain their old shared behavior.
 The callable feed treats them as shared during transition. Before tightening

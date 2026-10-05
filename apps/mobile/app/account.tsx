@@ -55,10 +55,18 @@ export default function Account() {
     setNotice("Your current wish identity is now saved with this email. Your UID and history stayed the same.");
   });
 
-  const signIn = () => void run(async () => {
-    const result = await signInExistingAccount(email, password);
-    if (result.blocked) {
-      throw new Error("This anonymous identity already has wishes. Save it with a new email first, or explicitly sign out; signing in will not merge identities.");
+  const completeSignIn = (allowWishIdentityReplacement = false) => void run(async () => {
+    const result = await signInExistingAccount(email, password, allowWishIdentityReplacement);
+    if (result.requiresWarning) {
+      Alert.alert(
+        "Leave these wishes?",
+        "This anonymous identity already has wishes. If you continue, this app will switch to the existing account after its credentials succeed. These unsaved wishes will no longer be recoverable through the app. This does not merge either identity.",
+        [
+          { text: "Keep my wishes", style: "cancel" },
+          { text: "Leave and sign in", style: "destructive", onPress: () => completeSignIn(true) },
+        ],
+      );
+      return;
     }
     setPassword("");
     setNotice("Signed in to the saved account.");
@@ -92,7 +100,7 @@ export default function Account() {
         <TextInput value={email} onChangeText={setEmail} editable={!busy} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" placeholder="Email" placeholderTextColor="rgba(255,255,255,0.45)" style={input} />
         <TextInput value={password} onChangeText={setPassword} editable={!busy} secureTextEntry placeholder="Password (6+ characters)" placeholderTextColor="rgba(255,255,255,0.45)" style={input} />
         <Pressable disabled={busy || !email || password.length < 6} onPress={save} style={primary(busy || !email || password.length < 6)}><Text style={primaryText}>Save this identity</Text></Pressable>
-        <Pressable disabled={busy || !email || password.length < 6} onPress={signIn} style={secondary(busy || !email || password.length < 6)}><Text style={secondaryText}>Sign in to existing account</Text></Pressable>
+        <Pressable disabled={busy || !email || password.length < 6} onPress={() => completeSignIn()} style={secondary(busy || !email || password.length < 6)}><Text style={secondaryText}>{identity.hasWishes ? "Leave and sign in" : "Sign in to existing account"}</Text></Pressable>
         <Pressable disabled={busy || !email} onPress={reset} style={secondary(busy || !email)}><Text style={secondaryText}>Send password reset</Text></Pressable>
       </> : <>
         <View style={card}>
@@ -105,7 +113,7 @@ export default function Account() {
       </>}
       <View style={card}>
         <Text style={title}>Recovery and identity limits</Text>
-        <Text style={body}>If you lose an unsaved anonymous identity, its wishes cannot be recovered. Signing into an existing account never merges two identities and this app refuses to replace an anonymous identity that already has wishes. Creating a new anonymous identity can still bypass a per-identity posting limit.</Text>
+        <Text style={body}>If you leave an unsaved anonymous identity, its wishes cannot be recovered through this app. A warning is required before switching to an existing account, and invalid credentials leave this identity in place. Signing in never merges two identities. Creating a new anonymous identity can still bypass a per-identity posting limit.</Text>
       </View>
       {notice ? <View style={{ backgroundColor: "rgba(255,255,255,0.1)", padding: 14, borderRadius: 14 }}><Text style={{ color: "rgba(255,255,255,0.88)", lineHeight: 20 }}>{notice}</Text></View> : null}
     </ScrollView>

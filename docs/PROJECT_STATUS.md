@@ -218,12 +218,16 @@ Track upstream-compatible fixes and assess runtime exposure before public releas
 - The emulator linked email/password credentials to a post-owning anonymous
   identity and verified its UID and existing private history stayed intact. It
   invoked the Firebase Auth password-reset API. A distinct saved account could
-  be signed into only from an empty anonymous session; no identity merge was
-  attempted or offered.
+  be signed into only after an explicit warning when an anonymous session owned
+  wishes. An invalid credential attempt retained that anonymous UID and its
+  history; a successful, deliberate sign-in changed identities without merging
+  their wishes.
 - The same run rejected a caller-supplied timezone on `canPost`, rejected a
   timezone change within 24 hours of posting, allowed a traveler whose last
   timezone change was eight days old to move from Toronto to Auckland, and
-  rejected a second immediate change under the seven-day cooldown.
+  rejected a second immediate change under the seven-day cooldown. A subsequent
+  profile initialization returned the stored Auckland timezone, which is the
+  refresh path used by the clock on focus and Firebase identity changes.
 - Functions build/lint, mobile TypeScript checking, all 14 regression tests, and
   Expo export for iOS, Android, and web passed. No Firebase resources, live
   accounts, data, deploys, pushes, or merges were changed.

@@ -196,15 +196,18 @@ export async function saveAnonymousWishes(email: string, password: string): Prom
   return linked;
 }
 
-/** Refuses to replace an anonymous identity that already owns wishes. */
-export async function signInExistingAccount(email: string, password: string): Promise<{ blocked: boolean; user?: User }> {
+/**
+ * A caller must explicitly opt in before replacing an anonymous identity that
+ * already owns wishes. Authentication is attempted before changing local state,
+ * so invalid credentials leave that identity signed in.
+ */
+export async function signInExistingAccount(email: string, password: string, allowWishIdentityReplacement = false): Promise<{ requiresWarning: boolean; user?: User }> {
   const current = await ensureAuth();
   if (!current.isAnonymous) throw new Error("Sign out before signing into another account.");
   const { data } = await _getIdentityStatus({}) as { data: { hasWishes: boolean } };
-  if (data.hasWishes) return { blocked: true };
-  await signOut(auth);
+  if (data.hasWishes && !allowWishIdentityReplacement) return { requiresWarning: true };
   const { user } = await signInWithEmailAndPassword(auth, email.trim(), password);
-  return { blocked: false, user };
+  return { requiresWarning: false, user };
 }
 
 export async function sendAccountRecovery(email: string): Promise<void> {

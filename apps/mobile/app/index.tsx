@@ -8,7 +8,7 @@ import {
   Animated,
   Easing,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { DateTime } from "luxon";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
@@ -16,7 +16,8 @@ import Svg, { Circle } from "react-native-svg";
 import { postingWindow, WINDOW_SECONDS } from "../src/utils/time";
 import { useServerClock } from "../src/utils/useServerClock";
 import { emulatorWindowStartMillis } from "../src/utils/emulator";
-import { initializePostingProfile } from "../src/lib/firebase";
+import { auth, initializePostingProfile } from "../src/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
 
 type GateState = "checking" | "locked" | "open";
 const { width } = Dimensions.get("window");
@@ -37,13 +38,19 @@ export default function Gate() {
   const progress = useRef(new Animated.Value(0)).current;
   const glow = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    let active = true;
-    void initializePostingProfile(deviceTimezone)
-      .then((profile) => { if (active) setTzId(profile.timezone); })
-      .catch((error) => console.warn("Could not load posting timezone:", error));
-    return () => { active = false; };
-  }, [deviceTimezone]);
+  const refreshPostingTimezone = React.useCallback(() => initializePostingProfile(deviceTimezone)
+    .then((profile) => setTzId(profile.timezone))
+    .catch((error) => console.warn("Could not load posting timezone:", error)), [deviceTimezone]);
+
+  // Settings may have changed the saved timezone while this screen was behind
+  // the navigation stack. Refresh on focus and whenever Firebase changes user.
+  useFocusEffect(React.useCallback(() => {
+    void refreshPostingTimezone();
+  }, [refreshPostingTimezone]));
+
+  useEffect(() => onAuthStateChanged(auth, (user) => {
+    if (user) void refreshPostingTimezone();
+  }), [refreshPostingTimezone]);
 
   const stars = useMemo(() => {
     const count = 60;

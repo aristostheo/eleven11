@@ -31,7 +31,7 @@ async function main() {
   assert(Number.isFinite(now) && Number.isFinite(windowStart), "Set emulator clock variables");
 
   const { initializeApp } = require("../apps/mobile/node_modules/firebase/app");
-  const { getAuth, connectAuthEmulator, signInAnonymously, linkWithCredential, EmailAuthProvider, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } = require("../apps/mobile/node_modules/firebase/auth");
+  const { getAuth, connectAuthEmulator, signInAnonymously, linkWithCredential, EmailAuthProvider, sendPasswordResetEmail, signInWithEmailAndPassword } = require("../apps/mobile/node_modules/firebase/auth");
   const { getStorage, connectStorageEmulator, ref, uploadBytes, getDownloadURL, deleteObject } = require("../apps/mobile/node_modules/firebase/storage");
   const { getFirestore, connectFirestoreEmulator, doc, getDoc } = require("../apps/mobile/node_modules/firebase/firestore");
 
@@ -147,11 +147,15 @@ async function main() {
   const traveled = await call("updatePostingTimezone", traveler.token, { timezone: "Pacific/Auckland" });
   assert.equal(traveled.status, 200, JSON.stringify(traveled.body));
   assert.equal(traveled.body.result.timezone, "Pacific/Auckland");
+  const refreshedTravelerProfile = await call("initializePostingProfile", traveler.token, { deviceTimezone: "America/Toronto" });
+  assert.equal(refreshedTravelerProfile.status, 200, JSON.stringify(refreshedTravelerProfile.body));
+  assert.equal(refreshedTravelerProfile.body.result.timezone, "Pacific/Auckland");
   const repeatedTravel = await call("updatePostingTimezone", traveler.token, { timezone: "Asia/Tokyo" });
   assert.equal(repeatedTravel.status, 400, JSON.stringify(repeatedTravel.body));
 
-  // Linking preserves the post-owning anonymous UID. A separate account sign-in
-  // changes only an empty session; it does not merge either identity's wishes.
+  // Linking preserves the post-owning anonymous UID. A failed sign-in leaves a
+  // wish-owning anonymous session in place; a later deliberate successful
+  // sign-in changes identities without merging their wishes.
   const originalOwnerUid = first.user.uid;
   await linkWithCredential(first.user, EmailAuthProvider.credential("owner@example.test", "secret1"));
   assert.equal(first.user.uid, originalOwnerUid);
@@ -162,12 +166,27 @@ async function main() {
   await sendPasswordResetEmail(first.auth, "owner@example.test");
   const unrelated = await identity("unrelated-saved-account");
   await linkWithCredential(unrelated.user, EmailAuthProvider.credential("other@example.test", "secret2"));
-  const emptySession = await identity("empty-sign-in-session");
-  const emptySessionUid = emptySession.user.uid;
-  await signOut(emptySession.auth);
-  const signedInUnrelated = await signInWithEmailAndPassword(emptySession.auth, "other@example.test", "secret2");
+  const protectedSession = await identity("protected-anonymous-session");
+  const protectedUid = protectedSession.user.uid;
+  await adminDb.collection("posts").doc("protected-anonymous-wish").set({
+    uid: protectedUid, createdAt: Timestamp.fromMillis(now), dayKey: "protected",
+    caption: "do not replace on invalid sign-in", visibility: "private", media: { type: "none" }, status: "active",
+  });
+  const protectedStatus = await call("getIdentityStatus", protectedSession.token, {});
+  assert.equal(protectedStatus.status, 200, JSON.stringify(protectedStatus.body));
+  assert.equal(protectedStatus.body.result.hasWishes, true);
+  await assert.rejects(
+    signInWithEmailAndPassword(protectedSession.auth, "other@example.test", "wrong-password"),
+    (error) => error?.code === "auth/invalid-credential" || error?.code === "auth/wrong-password",
+  );
+  assert.equal(protectedSession.auth.currentUser.uid, protectedUid);
+  const protectedToken = await protectedSession.auth.currentUser.getIdToken();
+  const protectedHistory = await call("getMyWishes", protectedToken, {});
+  assert.equal(protectedHistory.status, 200, JSON.stringify(protectedHistory.body));
+  assert(protectedHistory.body.result.wishes.some((wish) => wish.id === "protected-anonymous-wish"));
+  const signedInUnrelated = await signInWithEmailAndPassword(protectedSession.auth, "other@example.test", "secret2");
   assert.equal(signedInUnrelated.user.uid, unrelated.user.uid);
-  assert.notEqual(signedInUnrelated.user.uid, emptySessionUid);
+  assert.notEqual(signedInUnrelated.user.uid, protectedUid);
 
   const createdAt = Timestamp.fromMillis(now + (Date.now() - realStart));
   await adminDb.collection("posts").doc("older-owner").set({
