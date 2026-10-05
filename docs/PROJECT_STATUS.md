@@ -3,9 +3,9 @@
 ## What exists
 
 Eleven11 is a posting prototype with a read-only daily feed, private wish
-journal, reactions, local reminders, and a moderator review flow. The app routes are the clock
+journal, optional saved identities, reactions, local reminders, and a moderator review flow. The app routes are the clock
 (`app/index.tsx`), composer (`app/compose.tsx`), feed (`app/feed.tsx`), journal
-(`app/my-wishes.tsx`), and settings (`app/settings.tsx`). Items below distinguish
+(`app/my-wishes.tsx`), account (`app/account.tsx`), and settings (`app/settings.tsx`). Items below distinguish
 the implemented local v0.5 scope from remaining product work.
 
 Implemented locally:
@@ -13,8 +13,16 @@ Implemented locally:
 - Animated clock and countdown for 90-second windows at 11:11 AM and PM.
 - Text composer, photo selection, authenticated Storage upload, and submit feedback.
 - Anonymous Firebase authentication with shared sign-in requests.
+- Optional email/password linking for the current anonymous identity, plus
+  explicit existing-account sign-in, sign-out, and password-reset requests.
+  Linking preserves the existing UID; account emails never appear in wishes or
+  feed responses.
 - Server-side window and payload validation; one post per account/local day using
   a Firestore transaction and daily claim document.
+- Server-managed posting timezone initialized from a valid IANA device timezone.
+  The server uses it for posting windows and `dayKey`; travel changes are
+  deliberate, limited to once per seven days, and blocked for 24 hours after a
+  post. Viewer-local feed ranges and device-local reminders are unchanged.
 - Read-only daily feed with loading, empty, error, pull-to-refresh, and
   pagination states. It shows active captions, photos, and viewer-local posting
   times, newest first.
@@ -64,7 +72,7 @@ Implemented locally:
 | Before public launch | Reaction moderation | A single sparkle toggle is implemented. There are no rate limits, abuse controls, reaction notifications, or moderation workflow. | Define abuse limits and moderation policy before public launch. |
 | Before public launch | Reminder device behavior | Unit checks cover scheduling, cancellation, denied permission, and timezone rescheduling. Native permission prompts, scheduled delivery, timezone changes, and notification taps have not been observed on a device. | Test iOS and Android devices after an app build. |
 | Before public launch | Legacy image revocation | New app image delivery is revocable, but a URL already downloaded, copied, screenshotted, or issued by a legacy `media.url` cannot be recalled by hiding the Firestore post. | Inventory legacy URLs and run a reviewed Storage cleanup/migration; document that already copied media remains outside control. |
-| Before public launch | Posting identity/timezone policy | Anonymous users can reset their identity; the timezone comes from the caller. Daily claims protect one UID/date, not one person or a rolling 24 hours. | Define stable account and timezone-change rules if a stronger daily limit is required. |
+| Before public launch | Posting identity/timezone policy | Email/password recovery is optional and does not merge two existing identities. A person can still create a fresh anonymous identity, so daily claims protect one UID/date rather than one person or a rolling 24 hours. | Decide whether anonymous posting remains acceptable for launch and whether stronger account verification is needed. |
 | Before public launch | Media lifecycle and ownership | The backend now verifies the uploader UID, path, image type, and size before accepting an object reference; failed or expired submissions can still leave an orphan if cleanup cannot complete. | Add scheduled orphan cleanup and define post/media deletion. |
 | Next | Draft/retry experience | Drafts restore caption, visibility, and durable local photos; no upload progress UI exists. | Add upload progress and device-level recovery testing. |
 | Next | Responsive layout/accessibility | Fixed offsets/heights and initial screen dimensions; image buttons have no explicit accessibility labels. No native visual or assistive-technology testing yet. | Check safe areas, small screens, keyboard, screen reader, large text and reduced motion on devices. |
@@ -73,9 +81,9 @@ Implemented locally:
 
 ## Optional expansion, not implemented or yet specified
 
-Profiles, permanent sign-in/account recovery, remote push notifications,
-friends/following, sharing and post editing are absent. Journal access is tied
-to the current Firebase identity, and account recovery is not implemented.
+Profiles, remote push notifications, friends/following, sharing and post editing
+are absent. Journal recovery is available only after the user explicitly links
+email/password; anonymous identities remain installation-bound.
 
 ## Checks completed on 2026-09-28
 
@@ -200,6 +208,36 @@ Track upstream-compatible fixes and assess runtime exposure before public releas
   are not already live. Provision moderator access through a reviewed trusted
   Admin SDK/custom-claim process. No live resources, data, migrations, pushes,
   or merges were performed.
+
+## v0.6 identity/timezone verification
+
+- Two isolated Firebase Emulator Suite runs passed: one at Toronto
+  `2026-09-30 18:20 EDT`, and one on the Toronto spring-forward date,
+  `2026-03-08 11:11 EDT`. Both exercised the active 11:11 server window using
+  the server-owned `America/Toronto` profile.
+- The emulator linked email/password credentials to a post-owning anonymous
+  identity and verified its UID and existing private history stayed intact. It
+  invoked the Firebase Auth password-reset API. A distinct saved account could
+  be signed into only after an explicit warning when an anonymous session owned
+  wishes. An invalid credential attempt retained that anonymous UID and its
+  history; a successful, deliberate sign-in changed identities without merging
+  their wishes.
+- The same run rejected a caller-supplied timezone on `canPost`, rejected a
+  timezone change within 24 hours of posting, allowed a traveler whose last
+  timezone change was eight days old to move from Toronto to Auckland, and
+  rejected a second immediate change under the seven-day cooldown. A subsequent
+  profile initialization returned the stored Auckland timezone, which is the
+  refresh path used by the clock on focus and Firebase identity changes.
+- Functions build/lint, mobile TypeScript checking, all 14 regression tests, and
+  Expo export for iOS, Android, and web passed. No Firebase resources, live
+  accounts, data, deploys, pushes, or merges were changed.
+- Deployment requirement: enable **Email/Password** alongside Anonymous in
+  Firebase Authentication, configure the password-reset email template and
+  approved action/continue URL, and deploy the v0.6 identity/timezone Functions
+  and Firestore Rules with the mobile update. Existing server-created user
+  records without a posting timezone are initialized once from a valid device
+  IANA timezone. Physical-device account-linking and timezone-travel behavior
+  remain unverified.
 
 ## Suggested next milestone
 

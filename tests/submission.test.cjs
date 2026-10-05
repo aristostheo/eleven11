@@ -5,8 +5,17 @@ const { DateTime } = require('../functions/node_modules/luxon');
 const stored = new Map();
 let queue = Promise.resolve();
 let sequence = 0;
+const snapshot = (ref) => ({
+  exists: stored.has(ref.key),
+  data: () => stored.get(ref.key),
+  get: (field) => stored.get(ref.key)?.[field],
+});
 const collection = (name) => ({
-  doc: (id = `post-${++sequence}`) => ({ id, key: `${name}/${id}` }),
+  doc: (id = `post-${++sequence}`) => ({
+    id,
+    key: `${name}/${id}`,
+    get: async function () { return snapshot(this); },
+  }),
   where() { return this; },
   limit() { return this; },
 });
@@ -14,8 +23,9 @@ const db = {
   collection,
   runTransaction(callback) {
     const operation = queue.then(() => callback({
-      get: async (ref) => ref.key ? { exists: stored.has(ref.key) } : { empty: true },
+      get: async (ref) => ref.key ? snapshot(ref) : { empty: true },
       create: (ref, data) => stored.set(ref.key, data),
+      update: (ref, data) => stored.set(ref.key, { ...stored.get(ref.key), ...data }),
     }));
     queue = operation.catch(() => {});
     return operation;
@@ -36,7 +46,8 @@ Module._load = function (name, ...args) {
 };
 const { submitPost } = require('../functions/lib/index');
 Module._load = originalLoad;
-const payload = { tzId: 'UTC', caption: ' A wish ', visibility: 'private', media: { type: 'none' } };
+stored.set('users/test-user', { postingTimezone: 'UTC', timezoneUpdatedAt: { toMillis: () => 0 } });
+const payload = { caption: ' A wish ', visibility: 'private', media: { type: 'none' } };
 const auth = { auth: { uid: 'test-user' } };
 
 test('callable enforces authentication, payload validation, window and concurrent duplicates', async () => {

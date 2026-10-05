@@ -17,10 +17,9 @@ import { router } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
-import * as Localization from "expo-localization";
 import { DateTime } from "luxon";
 import Svg, { Circle } from "react-native-svg";
-import { canPost, submitPost, ensureAuth, uploadPhoto, deleteUploadedPhoto, type UploadedPhoto } from "../src/lib/firebase";
+import { canPost, submitPost, ensureAuth, initializePostingProfile, uploadPhoto, deleteUploadedPhoto, type UploadedPhoto } from "../src/lib/firebase";
 import { clearDraft, copyDraftPhoto, loadDraft, removeDraftPhoto, saveDraft, type DraftPhoto, type WishVisibility } from "../src/lib/drafts";
 import { useServerClock } from "../src/utils/useServerClock";
 
@@ -61,7 +60,7 @@ const showFnError = (err: any, fallback = "Action failed") => {
 };
 
 export default function Compose() {
-  const tzId = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+  const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
   const { serverNow } = useServerClock();
 
   const [caption, setCaption] = useState("");
@@ -73,6 +72,8 @@ export default function Compose() {
   const [windowLeft, setWindowLeft] = useState<string>("—");
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [reason, setReason] = useState<string | null>(null);
+  const [tzId, setTzId] = useState(deviceTimezone);
+  const [profileReady, setProfileReady] = useState(false);
 
   const pulse = useRef(new Animated.Value(0)).current;
   const cardIn = useRef(new Animated.Value(0)).current;
@@ -108,6 +109,15 @@ export default function Compose() {
     loop.start();
     return () => loop.stop();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void initializePostingProfile(deviceTimezone)
+      .then((profile) => { if (active) setTzId(profile.timezone); })
+      .catch(() => { if (active) setReason("Couldn’t load your posting timezone."); })
+      .finally(() => { if (active) setProfileReady(true); });
+    return () => { active = false; };
+  }, [deviceTimezone]);
 
   useEffect(() => {
     let active = true;
@@ -176,6 +186,11 @@ export default function Compose() {
     let active = true;
     let checking = false;
     const checkPermission = async () => {
+      if (!profileReady) {
+        setAllowed(false);
+        setReason("Loading your posting timezone…");
+        return;
+      }
       if (checking) return;
       const nowMillis = serverNow();
       if (nowMillis === null) {
@@ -191,7 +206,7 @@ export default function Compose() {
       checking = true;
       try {
         await ensureAuth();
-        const { data } = await canPost({ tzId, clientNow: Date.now() }) as { data: CanPostData };
+        const { data } = await canPost() as { data: CanPostData };
         if (active) {
           setAllowed(data.allowed);
           setReason(data.reason === "already-posted" ? "You already posted today."
@@ -209,7 +224,7 @@ export default function Compose() {
     checkPermission();
     const id = setInterval(checkPermission, 5000);
     return () => { active = false; clearInterval(id); };
-  }, [tzId, serverNow]);
+  }, [profileReady, tzId, serverNow]);
 
   const charCount = caption.trim().length;
   const remaining = MAX_CHARS - charCount;
@@ -285,7 +300,6 @@ export default function Compose() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       if (img) uploadedPhoto = await uploadPhoto(img.uri);
       const payload: any = {
-        tzId,
         caption: caption.trim(),
         visibility,
         media: img
@@ -429,7 +443,7 @@ export default function Compose() {
             Make your wish ✨
           </Text>
           <Text style={{ color: "rgba(255,255,255,0.8)", marginBottom: 14 }}>
-            {Localization.getCalendars()[0]?.timeZone || tzId}
+            Posting timezone: {tzId}
           </Text>
 
           {/* Input */}

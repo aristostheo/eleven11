@@ -47,8 +47,13 @@ const moderationDecisionSchema = z.object({
   reportId: z.string().min(1).max(200).regex(/^[^/]+$/),
   action: z.enum(["dismiss", "hide"]),
 });
+const initializePostingProfileSchema = z.object({ deviceTimezone: timezoneSchema }).strict();
+const updatePostingTimezoneSchema = z.object({ timezone: timezoneSchema }).strict();
+const emptyPayloadSchema = z.object({}).strict();
 const REPORT_WINDOW_MS = 10 * 60 * 1000;
 const MAX_REPORTS_PER_WINDOW = 5;
+const TIMEZONE_CHANGE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+const POST_TIMEZONE_LOCK_MS = 24 * 60 * 60 * 1000;
 
 type ImageMedia = { type: "image"; storagePath: string; w?: number; h?: number };
 type ObjectMetadata = {
@@ -85,6 +90,51 @@ function requireModerator(context: functions.https.CallableContext) {
     throw new functions.https.HttpsError("permission-denied", "Moderator access required");
   }
   return uid;
+}
+
+type PostingProfile = {
+  timezone: string;
+  timezoneUpdatedAtMillis: number;
+  lastPostAtMillis: number | null;
+};
+
+function millisOf(value: unknown): number | null {
+  return value && typeof (value as { toMillis?: unknown }).toMillis === "function"
+    ? (value as { toMillis: () => number }).toMillis()
+    : null;
+}
+
+function readPostingProfile(snapshot: FirebaseFirestore.DocumentSnapshot): PostingProfile {
+  const data = snapshot.data();
+  if (!data) {
+    throw new functions.https.HttpsError("failed-precondition", "Set a valid posting timezone before posting");
+  }
+  const timezone = data?.postingTimezone;
+  if (typeof timezone !== "string" || !timezoneSchema.safeParse(timezone).success) {
+    throw new functions.https.HttpsError("failed-precondition", "Set a valid posting timezone before posting");
+  }
+  return {
+    timezone,
+    timezoneUpdatedAtMillis: millisOf(data.timezoneUpdatedAt) ?? 0,
+    lastPostAtMillis: millisOf(data.lastPostAt),
+  };
+}
+
+function postingProfileResponse(profile: PostingProfile) {
+  const nextTimezoneChangeMillis = profile.timezoneUpdatedAtMillis + TIMEZONE_CHANGE_COOLDOWN_MS;
+  const postTimezoneLockUntilMillis = profile.lastPostAtMillis === null
+    ? null
+    : profile.lastPostAtMillis + POST_TIMEZONE_LOCK_MS;
+  return {
+    timezone: profile.timezone,
+    nextTimezoneChangeMillis,
+    postTimezoneLockUntilMillis,
+  };
+}
+
+async function getPostingProfileFor(uid: string): Promise<PostingProfile> {
+  const snapshot = await db.collection("users").doc(uid).get();
+  return readPostingProfile(snapshot);
 }
 
 function cursorFor(document: FirebaseFirestore.QueryDocumentSnapshot) {
@@ -189,14 +239,93 @@ async function hideSharedImage(storagePath: string) {
 // ——— getServerTime ——————————————————————————————————————
 export const getServerTime = functions.https.onCall(async () => ({ serverMillis: serverMillis() }));
 
+// ——— server-owned posting timezone ———————————————————————
+export const initializePostingProfile = functions.https.onCall(async (data, context) => {
+  const uid = requireAuth(context);
+  const parsed = initializePostingProfileSchema.safeParse(data);
+  if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
+  const user = db.collection("users").doc(uid);
+  const now = Timestamp.fromMillis(serverMillis());
+  const profile = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(user);
+    if (snapshot.exists) {
+      const data = snapshot.data();
+      if (typeof data?.postingTimezone === "string" && timezoneSchema.safeParse(data.postingTimezone).success) {
+        return readPostingProfile(snapshot);
+      }
+      // Older server-created user records did not carry a posting timezone.
+      // Initialize that one missing field once; callers still cannot change it
+      // through canPost or submitPost.
+      transaction.set(user, {
+        postingTimezone: parsed.data.deviceTimezone,
+        timezoneUpdatedAt: now,
+      }, { merge: true });
+    } else {
+      transaction.create(user, {
+        postingTimezone: parsed.data.deviceTimezone,
+        timezoneUpdatedAt: now,
+        createdAt: now,
+      });
+    }
+    return {
+      timezone: parsed.data.deviceTimezone,
+      timezoneUpdatedAtMillis: now.toMillis(),
+      lastPostAtMillis: null,
+    };
+  });
+  return postingProfileResponse(profile);
+});
+
+export const getPostingProfile = functions.https.onCall(async (data, context) => {
+  const uid = requireAuth(context);
+  if (!emptyPayloadSchema.safeParse(data).success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
+  return postingProfileResponse(await getPostingProfileFor(uid));
+});
+
+export const getIdentityStatus = functions.https.onCall(async (data, context) => {
+  const uid = requireAuth(context);
+  if (!emptyPayloadSchema.safeParse(data).success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
+  const wishes = await db.collection("posts").where("uid", "==", uid).limit(1).get();
+  return { hasWishes: !wishes.empty };
+});
+
+export const updatePostingTimezone = functions.https.onCall(async (data, context) => {
+  const uid = requireAuth(context);
+  const parsed = updatePostingTimezoneSchema.safeParse(data);
+  if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
+  const user = db.collection("users").doc(uid);
+  const nowMillis = serverMillis();
+  const profile = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(user);
+    const current = readPostingProfile(snapshot);
+    if (current.timezone === parsed.data.timezone) return current;
+    const postLockUntilMillis = current.lastPostAtMillis === null
+      ? 0
+      : current.lastPostAtMillis + POST_TIMEZONE_LOCK_MS;
+    if (nowMillis < postLockUntilMillis) {
+      throw new functions.https.HttpsError("failed-precondition", "Timezone stays locked for 24 hours after posting");
+    }
+    const nextTimezoneChangeMillis = current.timezoneUpdatedAtMillis + TIMEZONE_CHANGE_COOLDOWN_MS;
+    if (nowMillis < nextTimezoneChangeMillis) {
+      throw new functions.https.HttpsError("failed-precondition", "Timezone can be changed once every 7 days");
+    }
+    const updatedAt = Timestamp.fromMillis(nowMillis);
+    transaction.update(user, {
+      postingTimezone: parsed.data.timezone,
+      timezoneUpdatedAt: updatedAt,
+    });
+    return { ...current, timezone: parsed.data.timezone, timezoneUpdatedAtMillis: nowMillis };
+  });
+  return postingProfileResponse(profile);
+});
+
 // ——— canPost ————————————————————————————————————————————
-const CanPostSchema = z.object({ tzId: timezoneSchema, clientNow: z.number().optional() });
 
 export const canPost = functions.https.onCall(async (data, context) => {
-  const parsed = CanPostSchema.safeParse(data);
-  if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
   const uid = requireAuth(context);
-  const now = DateTime.fromMillis(serverMillis()).setZone(parsed.data.tzId);
+  if (!emptyPayloadSchema.safeParse(data).success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
+  const profile = await getPostingProfileFor(uid);
+  const now = DateTime.fromMillis(serverMillis()).setZone(profile.timezone);
   const dayKey = now.toISODate();
   const existing = await db.collection("posts").where("uid", "==", uid).where("dayKey", "==", dayKey).limit(1).get();
   const inWindow = postingWindowFor(now).open;
@@ -204,23 +333,25 @@ export const canPost = functions.https.onCall(async (data, context) => {
     allowed: inWindow && existing.empty,
     reason: !inWindow ? "outside-window" : existing.empty ? null : "already-posted",
     dayKey,
+    timezone: profile.timezone,
   };
 });
 
 // ——— submitPost —————————————————————————————————————————
 const SubmitSchema = z.object({
-  tzId: timezoneSchema,
   caption: z.string().trim().min(1).max(280),
   visibility: visibilitySchema,
   media: mediaSchema,
-});
+}).strict();
 
 export const submitPost = functions.https.onCall(async (data, context) => {
   const uid = requireAuth(context);
   const parsed = SubmitSchema.safeParse(data);
   if (!parsed.success) throw new functions.https.HttpsError("invalid-argument", "Bad payload");
-  const { tzId, caption, visibility, media } = parsed.data;
-  const now = DateTime.fromMillis(serverMillis()).setZone(tzId);
+  const { caption, visibility, media } = parsed.data;
+  const profile = await getPostingProfileFor(uid);
+  const nowMillis = serverMillis();
+  const now = DateTime.fromMillis(nowMillis).setZone(profile.timezone);
   const dayKey = now.toISODate();
   if (!postingWindowFor(now).open) {
     throw new functions.https.HttpsError("failed-precondition", "Not in 11:11 window");
@@ -232,18 +363,26 @@ export const submitPost = functions.https.onCall(async (data, context) => {
   if (imageFile) await markImageVisibility(imageFile, uid, visibility);
 
   const claim = db.collection("postClaims").doc(`${uid}_${dayKey}`);
+  const user = db.collection("users").doc(uid);
   const ref = db.collection("posts").doc();
   await db.runTransaction(async (transaction) => {
-    const claimed = await transaction.get(claim);
-    const existing = await transaction.get(db.collection("posts")
-      .where("uid", "==", uid).where("dayKey", "==", dayKey).limit(1));
+    const [profileSnapshot, claimed, existing] = await Promise.all([
+      transaction.get(user),
+      transaction.get(claim),
+      transaction.get(db.collection("posts")
+        .where("uid", "==", uid).where("dayKey", "==", dayKey).limit(1)),
+    ]);
+    const currentProfile = readPostingProfile(profileSnapshot);
+    if (currentProfile.timezone !== profile.timezone) {
+      throw new functions.https.HttpsError("failed-precondition", "Posting timezone changed; try again");
+    }
     if (claimed.exists || !existing.empty) {
       throw new functions.https.HttpsError("already-exists", "Already posted today");
     }
     transaction.create(claim, { postId: ref.id });
     transaction.create(ref, {
       uid,
-      createdAt: Timestamp.fromMillis(serverMillis()),
+      createdAt: Timestamp.fromMillis(nowMillis),
       dayKey,
       caption,
       visibility,
@@ -252,8 +391,12 @@ export const submitPost = functions.https.onCall(async (data, context) => {
       reacts: { sparkle: 0, crystal: 0 },
       reports: 0,
     });
+    transaction.update(user, {
+      lastPostAt: Timestamp.fromMillis(nowMillis),
+      lastPostDayKey: dayKey,
+    });
   });
-  return { postId: ref.id, visibility };
+  return { postId: ref.id, visibility, timezone: profile.timezone };
 });
 
 // ——— read-only shared daily feed —————————————————————————
