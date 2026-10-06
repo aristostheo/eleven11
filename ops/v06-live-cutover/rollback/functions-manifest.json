@@ -1,0 +1,29 @@
+{
+  "archivedAt": "2026-10-06T03:11:48.187Z",
+  "project": "eleven11-aristos",
+  "functions": [
+    {
+      "name": "projects/eleven11-aristos/locations/us-central1/functions/canPost",
+      "status": "ACTIVE",
+      "updateTime": "2025-11-13T20:12:23.195Z",
+      "runtime": "nodejs20",
+      "region": "us-central1"
+    },
+    {
+      "name": "projects/eleven11-aristos/locations/us-central1/functions/getServerTime",
+      "status": "ACTIVE",
+      "updateTime": "2025-11-13T20:12:09.609Z",
+      "runtime": "nodejs20",
+      "region": "us-central1"
+    },
+    {
+      "name": "projects/eleven11-aristos/locations/us-central1/functions/submitPost",
+      "status": "ACTIVE",
+      "updateTime": "2025-11-13T20:12:22.387Z",
+      "runtime": "nodejs20",
+      "region": "us-central1"
+    }
+  ],
+  "sourceBundle": null,
+  "sourceArchiveStatus": "not downloaded (HTTP 403; the operator needs read access to the Gen 1 source-upload object)"
+}
