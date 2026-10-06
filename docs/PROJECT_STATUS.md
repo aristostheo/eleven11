@@ -21,7 +21,9 @@ the implemented local v0.5 scope from remaining product work.
 - Exact active Firestore/Storage Rules were archived locally under
   `ops/v06-live-cutover/rollback/`. The live Functions archive listed all three
   Gen 1 functions but received HTTP 403 for the source-upload object. The exact
-  Functions ZIP is a release blocker until an authorized operator archives it.
+  Functions ZIP is a known rollback limitation. The `63555ea` repository archive
+  is behaviorally supported by live probes but remains an unproven fallback;
+  the cutover's recovery plan is a coordinated forward fix.
 - No Email/Password provider, moderator claim, rules/indexes, functions,
   migration, object metadata, or live image token changed in this preparation.
 

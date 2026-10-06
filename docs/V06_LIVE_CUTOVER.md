@@ -6,6 +6,15 @@ the old timezone-carrying post payload, while merged v0.6 expects server-owned
 posting profiles and new callable endpoints. Old and new clients cannot safely
 run against the other backend contract.
 
+For this Expo Go project, **maintenance** is an operator-controlled test pause,
+not a public maintenance page or forced client shutdown. There is no public
+release channel to disable. Before deployment, stop the development Metro
+session, tell the known Expo Go testers not to open or submit through the old
+QR session, and avoid the 11:11 window while Functions/rules/migration are
+being changed. Start a fresh matching Expo session only after the deployment
+checks pass. This reduces mixed-client traffic; it cannot recall a previously
+scanned Expo Go bundle.
+
 ## Prepared rollback artifacts
 
 `ops/v06-live-cutover/rollback/` contains review copies of exact read-only
@@ -32,15 +41,18 @@ reads the deployed source):
 cd /Users/aristos/Documents/eleven11
 archive_dir=/Users/aristos/Documents/.eleven11-cutover-archives/2026-10-05
 node scripts/archive-v06-live-rollback.cjs "$archive_dir"
-gzip -t "$archive_dir/functions-gen1-source.zip"
+unzip -t "$archive_dir/functions-gen1-source.zip"
 shasum -a 256 "$archive_dir/functions-gen1-source.zip"
 ```
 
-Do not add broad Storage access merely to bypass this safeguard. If an approved
-operator cannot archive the exact source, stop the cutover; rollback is
-incomplete.
+The helper enforces `0700` on the archive directory and `0600` on every file it
+saves. It first downloads to a private temporary path, runs `unzip -t`, then
+atomically retains the ZIP and writes its SHA-256 into the secure manifest.
 
-### Reproducible repository fallback — not an equivalent archive
+Do not add broad Storage access merely to bypass this safeguard. The missing
+exact deployed ZIP is a known rollback limitation, not a cutover gate.
+
+### Behaviorally supported, unproven repository fallback
 
 The exact ZIP remains unavailable. As a clearly labeled fallback, the
 repository's only commit before the three Functions' 2025-11-13 deployment,
@@ -57,9 +69,9 @@ this candidate: `getServerTime({})` returned HTTP 200 with `result.serverMillis`
 required`. Those are the v0.2 source contract in that commit and differ from
 merged v0.6, whose unauthenticated `canPost({})` would fail Auth before parsing.
 
-This is behavioral/version-timing evidence only. It is **not** proof that the
-candidate tarball equals the deployed ZIP and it must not be treated as the
-exact live-source rollback archive.
+This is behavioral/version-timing evidence only. It is a **behaviorally
+supported, unproven fallback**: not proof that the candidate tarball equals the
+deployed ZIP, and not an exact live-source rollback archive.
 
 ## Verified legacy migration dry run
 
@@ -148,9 +160,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/secure/path/cutover-service-account.json \
 Stop if any expected result fails. Keep maintenance on until the matching app
 has passed acceptance.
 
-1. Announce maintenance and block new posts/sessions. Start from a clean
-   checkout of this merged `master`; run the checks below and complete the
-   Functions source archive.
+1. Announce the Expo Go maintenance pause described above. Start from a clean
+   checkout of this merged `master`; run the checks below. Archiving the exact
+   old Functions source remains desirable but does not block this forward
+   cutover.
 2. Enable Email/Password and review the **default** reset template, as above;
    retain Anonymous.
 3. Deploy indexes first and wait for all to be ready:
@@ -274,14 +287,19 @@ With Expo Go SDK 57 on the same Wi-Fi, scan the QR code and record exact results
    Verify feed/image exclusion and explain that an already downloaded image
    cannot be recalled.
 
-## Rollback
+## Recovery
 
-Keep maintenance on. Restore the archived Rules and redeploy the archived Gen
-1 Functions source as one coordinated rollback with the old mobile client. Do
-not roll back only one side of the callable contract. The legacy migration is
-forward-compatible (`visibility: shared`, `legacyShared`, and object metadata);
-do not remove those fields in an incident. Do not restore a cleared download
-token. If the exact Functions ZIP is absent, stop and obtain it before release.
+Keep the Expo Go maintenance pause on while recovering. The primary recovery
+path is a coordinated **forward fix** from the reviewed merged source: correct
+the issue, run checks, deploy the corrected Functions/rules as appropriate,
+then restart a fresh Expo Go session. Do not roll back only the client or only
+Functions because their callable contracts differ.
+
+The archived Rules and the behaviorally supported, unproven `63555ea` source
+candidate are forensic aids, not an automatic rollback plan. The legacy
+migration is forward-compatible (`visibility: shared`, `legacyShared`, and
+object metadata); do not remove those fields in an incident. Do not restore a
+cleared download token.
 
 ## Local checks
 
