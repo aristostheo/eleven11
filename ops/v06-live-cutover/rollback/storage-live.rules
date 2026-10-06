@@ -1,0 +1,15 @@
+
+// Storage security rules (starter)
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() { return request.auth != null; }
+    match /uploads/{uid}/{fileName} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.auth.uid == uid
+                    && request.resource.size < 3 * 1024 * 1024
+                    && request.resource.contentType.matches('image/.*');
+      allow delete: if isSignedIn() && request.auth.uid == uid;
+    }
+  }
+}

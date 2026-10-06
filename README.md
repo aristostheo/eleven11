@@ -10,6 +10,11 @@ and unfinished work](docs/PROJECT_STATUS.md).
 
 Commands below start from the repository root unless stated otherwise.
 
+For the reviewed production deployment sequence, legacy-post dry run, rollback
+artifacts, moderator-claim procedure, and iPhone acceptance commands, see the
+[v0.6 live cutover runbook](docs/V06_LIVE_CUTOVER.md). It prepares a
+maintenance-window deployment; it does not deploy Firebase resources itself.
+
 ## Run on your phone with Expo Go
 
 Use Node 22.13+ for mobile development and npm. Cloud Functions are configured

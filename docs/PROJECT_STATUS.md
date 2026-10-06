@@ -8,6 +8,25 @@ journal, optional saved identities, reactions, local reminders, and a moderator 
 (`app/my-wishes.tsx`), account (`app/account.tsx`), and settings (`app/settings.tsx`). Items below distinguish
 the implemented local v0.5 scope from remaining product work.
 
+## v0.6 live cutover preparation — 2026-10-05
+
+- Merged `master` was audited against `eleven11-aristos` without changing any
+  live resource. Production still has three Gen 1 v0.2 callables; its rules,
+  indexes, and Auth providers have not received the merged v0.3–v0.6 upgrade.
+  The ordered maintenance plan is [V06_LIVE_CUTOVER.md](V06_LIVE_CUTOVER.md).
+- A guarded production dry run found exactly two active legacy posts. It would
+  label both shared, convert the one verified legacy image to a server-owned
+  storage path, and clear the old token only during an approved apply. The dry
+  run made no write and did not clear a token.
+- Exact active Firestore/Storage Rules were archived locally under
+  `ops/v06-live-cutover/rollback/`. The live Functions archive listed all three
+  Gen 1 functions but received HTTP 403 for the source-upload object. The exact
+  Functions ZIP is a known rollback limitation. The `63555ea` repository archive
+  is behaviorally supported by live probes but remains an unproven fallback;
+  the cutover's recovery plan is a coordinated forward fix.
+- No Email/Password provider, moderator claim, rules/indexes, functions,
+  migration, object metadata, or live image token changed in this preparation.
+
 Implemented locally:
 
 - Animated clock and countdown for 90-second windows at 11:11 AM and PM.
